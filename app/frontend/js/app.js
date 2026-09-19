@@ -354,12 +354,16 @@ function renderSetup() {
 }
 
 async function handleSetupMal() {
+    // Capture the client ID before re-rendering the setup screen.
+    // renderSetup() replaces document.body.innerHTML, so reading the input
+    // after that call would always produce an empty/undefined client ID.
+    const clientInput = document.getElementById("setup-mal-client-id");
+    const clientId = clientInput?.value?.trim() || undefined;
+
     state.setup.busy = true;
     state.setup.malMessage = "Opening MyAnimeList authorization…";
     renderSetup();
     try {
-        const clientInput = document.getElementById("setup-mal-client-id");
-        const clientId = clientInput?.value?.trim() || undefined;
         const result = await call("mal_auth_start", { client_id: clientId });
         state.setup.malMessage = result?.message || "Complete authorization in your browser. Waiting for MAL…";
         renderSetup();
