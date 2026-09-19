@@ -1,0 +1,78 @@
+﻿name: Bug Report
+description: Report a problem or unexpected behavior in WAYMARK.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a WAYMARK bug.
+
+        **IMPORTANT:** Never include passwords, MAL credentials, MAL access/refresh tokens, Serializd session tokens, cookies, API secrets, or other private credentials in this report.
+
+  - type: input
+    id: version
+    attributes:
+      label: WAYMARK version
+      description: Which WAYMARK version are you using?
+      placeholder: "v1.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: Which Windows version are you using?
+      placeholder: "Windows 11 24H2"
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What went wrong?
+      description: Describe the problem you encountered.
+      placeholder: Tell us what happened.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      description: Describe what you expected WAYMARK to do.
+      placeholder: Tell us what you expected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Give the steps that cause the problem.
+      placeholder: |
+        1. Open WAYMARK
+        2. Open ...
+        3. Click ...
+        4. The problem occurs
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or additional details
+      description: Add screenshots, error messages, or anything else that may help diagnose the problem.
+      placeholder: Drag and drop screenshots here, if useful.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security confirmation
+      options:
+        - label: I confirm that I have not included passwords, MAL credentials, MAL tokens, Serializd session tokens, cookies, API secrets, or other private credentials in this report.
+          required: true
