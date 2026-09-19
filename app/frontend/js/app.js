@@ -306,7 +306,7 @@ function renderSetup() {
     document.body.innerHTML = `
         <main class="setup-shell">
             <section class="setup-card">
-                <div class="setup-brand"><span class="brand-mark">W</span><span>WAYMARK</span></div>
+                <div class="setup-brand"><span class="brand-mark logo-mark"><img src="assets/waymark-icon.png" alt="" aria-hidden="true"></span><span>WAYMARK</span></div>
                 <div class="setup-eyebrow">FIRST-RUN SETUP</div>
                 <h1>Connect your services.</h1>
                 <p class="setup-lead">WAYMARK keeps your accounts separate and stores authentication data in your Windows user profile.</p>

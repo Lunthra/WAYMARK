@@ -42,6 +42,8 @@ button { color: inherit; }
     width: 30px; height: 30px; border: 1px solid var(--border-strong);
     border-radius: 9px; display: grid; place-items: center; font-size: 12px; font-weight: 800;
 }
+.brand-mark.logo-mark { overflow: hidden; padding: 4px; background: #000; }
+.brand-mark.logo-mark img { width: 100%; height: 100%; display: block; object-fit: contain; }
 .brand-name { font-size: 16px; font-weight: 800; letter-spacing: .08em; }
 
 .primary-nav { display: grid; gap: 4px; }
