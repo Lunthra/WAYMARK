@@ -1,0 +1,36 @@
+.env
+*.env
+token.json
+pkce_verifier.txt
+credentials.dat
+WAYMARK_EDGE/
+.venv/
+__pycache__/
+*.py[cod]
+node_modules/
+out/
+dist/
+build/
+release/
+*.log
+.DS_Store
+Thumbs.db
+
+# WAYMARK local backups / generated release material
+*.zip
+archive/
+release-audit-files.txt
+release-cleanup.ps1
+~$*
+
+# Legacy local test script
+main.py
+
+# Local WAYMARK runtime data
+app/backend/data/aliases.json
+app/backend/data/notes.json
+app/backend/data/waymark_media.json
+
+# Local packaging backups
+app/desktop/package.json.stage2-backup
+app/desktop/package.json.stage2-working

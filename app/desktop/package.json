@@ -1,0 +1,49 @@
+{
+    "name": "waymark-desktop",
+    "version": "1.0.0",
+    "description": "WAYMARK desktop media operating system",
+    "main": "main.js",
+    "scripts": {
+        "start": "electron .",
+        "package": "electron-forge package",
+        "make": "electron-forge make"
+    },
+    "keywords": [
+        "waymark",
+        "media-tracker"
+    ],
+    "author": "WAYMARK",
+    "license": "ISC",
+    "type": "commonjs",
+    "engines": {
+        "node": ">=22.12.0"
+    },
+    "devDependencies": {
+        "@electron-forge/cli": "^7.11.2",
+        "@electron-forge/maker-squirrel": "^7.11.2",
+        "@electron-forge/maker-zip": "^7.11.2",
+        "electron": "^44.4.1"
+    },
+    "config": {
+        "forge": {
+            "packagerConfig": {
+                "asar": true,
+                "executableName": "WAYMARK",
+                "name": "WAYMARK",
+                "productName": "WAYMARK",
+                "extraResource": [
+                    "../frontend",
+                    "../backend/data",
+                    "../../dist/WAYMARK-backend.exe",
+                    "assets/waymark.ico"
+                ],
+                "icon": "assets/waymark"
+            },
+            "makers": [
+                {
+                    "name": "@electron-forge/maker-zip"
+                }
+            ]
+        }
+    }
+}
