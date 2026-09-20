@@ -17,6 +17,7 @@ import threading
 import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import socket
 from typing import Any
 
 import requests
@@ -40,6 +41,10 @@ _state: dict[str, Any] = {
     "username": None,
     "client_id": None,
 }
+
+_active_servers: list[ThreadingHTTPServer] = []
+_active_verifier_path: str | None = None
+_active_cancel: threading.Event | None = None
 
 
 def build_authorization_url(client_id: str, code_challenge: str) -> str:
@@ -89,6 +94,53 @@ def _finish_status(status: str, *, error: str | None = None, message: str | None
         _state["message"] = message
 
 
+def _shutdown_servers(servers: list[ThreadingHTTPServer]) -> None:
+    for server in servers:
+        try:
+            server.shutdown()
+        except Exception:
+            pass
+        try:
+            server.server_close()
+        except Exception:
+            pass
+
+
+def _cancel_active_attempt() -> None:
+    global _active_servers, _active_verifier_path, _active_cancel
+
+    with _lock:
+        servers = list(_active_servers)
+        cancel = _active_cancel
+        verifier_path = _active_verifier_path
+        _active_servers = []
+        _active_verifier_path = None
+        _active_cancel = None
+        if _state["status"] == "waiting":
+            _state.update({
+                "status": "idle",
+                "error": None,
+                "message": "Previous MyAnimeList authorization attempt was cancelled.",
+                "username": None,
+                "client_id": None,
+            })
+
+    if cancel is not None:
+        cancel.set()
+    if servers:
+        threading.Thread(
+            target=_shutdown_servers,
+            args=(servers,),
+            name="WAYMARK-MAL-OAuth-Cancel",
+            daemon=True,
+        ).start()
+
+    if verifier_path:
+        try:
+            os.remove(verifier_path)
+        except FileNotFoundError:
+            pass
+
 def start_mal_auth(client_id: str | None = None) -> dict[str, Any]:
     client_id = _get_client_id(client_id)
     if not client_id:
@@ -97,11 +149,20 @@ def start_mal_auth(client_id: str | None = None) -> dict[str, Any]:
         )
 
     with _lock:
+        waiting = _state["status"] == "waiting"
+
+    if waiting and client_id:
+        _cancel_active_attempt()
+
+    with _lock:
         if _state["status"] == "waiting":
             return get_mal_auth_status()
 
     verifier = secrets.token_urlsafe(32)
-    verifier_path = get_data_file("pkce_verifier.txt", migrate=False)
+    verifier_path = get_data_file(
+        f"pkce_verifier_{secrets.token_hex(8)}.txt",
+        migrate=False,
+    )
     verifier_path_obj = os.path.abspath(verifier_path)
 
     with open(verifier_path_obj, "w", encoding="utf-8") as handle:
@@ -152,6 +213,10 @@ def start_mal_auth(client_id: str | None = None) -> dict[str, Any]:
                     if not isinstance(tokens, dict) or not tokens.get("access_token"):
                         raise RuntimeError("MAL token response did not contain an access token.")
 
+                    # Persist the client ID only after MAL has accepted it and
+                    # returned a valid access token. A failed OAuth attempt must
+                    # never leave the attempted ID in the persistent app store.
+                    set_mal_client_id(client_id)
                     set_credentials(
                         "mal",
                         {
@@ -180,13 +245,37 @@ def start_mal_auth(client_id: str | None = None) -> dict[str, Any]:
             self.send_header("Content-Length", str(len(encoded)))
             self.end_headers()
             self.wfile.write(encoded)
+            # The callback is terminal for this OAuth attempt. Signal the
+            # supervisor so both localhost listeners are shut down cleanly.
+            cancel_event.set()
 
-    # WAYMARK's MAL application uses the standard registered localhost
-    # callback. Port 80 is the implicit port for http://localhost.
+    # The registered redirect is http://localhost, so Windows may resolve it
+    # to either 127.0.0.1 or ::1. Bind both explicitly instead of relying on
+    # platform-specific dual-stack behavior. This avoids ERR_CONNECTION_REFUSED
+    # after a successful MAL authorization when the browser chooses IPv6.
     redirect_uri = REDIRECT_URI
+
+    class IPv6HTTPServer(ThreadingHTTPServer):
+        address_family = socket.AF_INET6
+
+        def server_bind(self):
+            try:
+                self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            except (AttributeError, OSError):
+                pass
+            super().server_bind()
+
+    servers: list[ThreadingHTTPServer] = []
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", 80), CallbackHandler)
+        servers.append(ThreadingHTTPServer(("127.0.0.1", 80), CallbackHandler))
+        try:
+            servers.append(IPv6HTTPServer(("::1", 80), CallbackHandler))
+        except OSError:
+            # IPv6 may be disabled on a Windows installation. IPv4 is still
+            # sufficient when localhost resolves to 127.0.0.1.
+            pass
     except OSError as exc:
+        _shutdown_servers(servers)
         try:
             os.remove(verifier_path_obj)
         except FileNotFoundError:
@@ -195,6 +284,12 @@ def start_mal_auth(client_id: str | None = None) -> dict[str, Any]:
             "WAYMARK could not open its MAL callback listener on localhost:80. "
             "Close another program using port 80 and try again."
         ) from exc
+
+    cancel_event = threading.Event()
+    with _lock:
+        _active_servers = servers
+        _active_verifier_path = verifier_path_obj
+        _active_cancel = cancel_event
 
     params = {
         "response_type": "code",
@@ -215,15 +310,38 @@ def start_mal_auth(client_id: str | None = None) -> dict[str, Any]:
 
     def worker():
         try:
+            server_threads = []
+            for server in servers:
+                thread = threading.Thread(
+                    target=server.serve_forever,
+                    kwargs={"poll_interval": 0.2},
+                    name="WAYMARK-MAL-Callback",
+                    daemon=True,
+                )
+                thread.start()
+                server_threads.append(thread)
+
             webbrowser.open(auth_url)
-            server.handle_request()
+
+            # Stay alive until the callback completes or a retry supersedes
+            # this attempt. There is intentionally no one-second listener
+            # timeout: the browser may take as long as needed to authorize.
+            cancel_event.wait()
         except Exception as exc:
-            _finish_status("error", error=str(exc))
+            with _lock:
+                current = any(server in _active_servers for server in servers)
+            if current:
+                _finish_status("error", error=str(exc))
         finally:
-            try:
-                server.server_close()
-            except Exception:
-                pass
+            _shutdown_servers(servers)
+            with _lock:
+                for server in servers:
+                    if server in _active_servers:
+                        _active_servers.remove(server)
+                if not _active_servers:
+                    _active_verifier_path = None
+                    if _active_cancel is cancel_event:
+                        _active_cancel = None
             try:
                 os.remove(verifier_path_obj)
             except FileNotFoundError:

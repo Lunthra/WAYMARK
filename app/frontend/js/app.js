@@ -10,6 +10,7 @@ const state = {
         status: null,
         busy: false,
         malMessage: "",
+        malAttemptId: 0,
         serializdMessage: ""
     },
     route: "home",
@@ -288,8 +289,8 @@ function setupServiceRow(service, connected, title, description, extra = "") {
                 <p>${description}</p>
                 ${extra}
             </div>
-            <button class="btn ${connected ? "" : "btn-primary"}" data-action="${action}" ${state.setup.busy ? "disabled" : ""}>
-                ${connected ? "Reconnect" : "Connect"}
+            <button class="btn ${connected ? "" : "btn-primary"}" data-action="${action}" ${state.setup.busy && service !== "mal" ? "disabled" : ""}>
+                ${connected ? "Reconnect" : (service === "mal" && state.setup.busy ? "Retry MAL" : "Connect")}
             </button>
         </div>
     `;
@@ -299,7 +300,7 @@ function renderSetup() {
     const status = state.setup.status || {};
     const mal = status.mal || {};
     const serializd = status.serializd || {};
-    const malClientIdConfigured = !!mal.client_id_configured;
+    const malConnected = !!mal.connected;
     const complete = !!status.complete;
 
     document.body.classList.add("waymark-setup-mode");
@@ -317,13 +318,13 @@ function renderSetup() {
                         !!mal.connected,
                         "MyAnimeList",
                         "Connect your MAL account so WAYMARK can read and update your anime list.",
-                        !malClientIdConfigured ? `
+                        !malConnected ? `
                             <label class="setup-field">
                                 <span>MAL Client ID</span>
-                                <input id="setup-mal-client-id" type="text" autocomplete="off" placeholder="Enter your MAL OAuth client ID">
+                                <input id="setup-mal-client-id" type="text" autocomplete="off" value="${esc(mal.client_id || "")}" placeholder="Enter your MAL OAuth client ID">
                                 <small>This is the public client ID from your MAL developer application. It is not your account password or token.</small>
                             </label>
-                        ` : `<small class="setup-note">MAL application configuration is already available.</small>`
+                        ` : `<small class="setup-note">MAL is connected.</small>`
                     )}
                     ${setupServiceRow(
                         "serializd",
@@ -354,36 +355,52 @@ function renderSetup() {
 }
 
 async function handleSetupMal() {
-    // Capture the client ID before re-rendering the setup screen.
-    // renderSetup() replaces document.body.innerHTML, so reading the input
-    // after that call would always produce an empty/undefined client ID.
+    // Capture the current value before renderSetup() replaces document.body.
     const clientInput = document.getElementById("setup-mal-client-id");
     const clientId = clientInput?.value?.trim() || undefined;
 
+    // Each click owns one frontend attempt. A newer retry supersedes the
+    // previous polling loop so an old OAuth attempt cannot reset the UI.
+    const attemptId = (state.setup.malAttemptId || 0) + 1;
+    state.setup.malAttemptId = attemptId;
     state.setup.busy = true;
     state.setup.malMessage = "Opening MyAnimeList authorization…";
     renderSetup();
+
     try {
         const result = await call("mal_auth_start", { client_id: clientId });
+
+        if (state.setup.malAttemptId !== attemptId) return;
+
         state.setup.malMessage = result?.message || "Complete authorization in your browser. Waiting for MAL…";
         renderSetup();
 
         for (let attempt = 0; attempt < 240; attempt += 1) {
             await new Promise(resolve => setTimeout(resolve, 1000));
+
+            if (state.setup.malAttemptId !== attemptId) return;
+
             const status = await call("mal_auth_status");
             state.setup.status = await call("setup_status");
+
+            if (state.setup.malAttemptId !== attemptId) return;
+
             if (status.status === "connected" || state.setup.status?.mal?.connected) {
                 state.setup.malMessage = "MyAnimeList connected successfully.";
                 state.setup.busy = false;
                 renderSetup();
                 return;
             }
+
             if (status.status === "error") {
                 throw new Error(status.error || "MyAnimeList authorization failed.");
             }
         }
+
         throw new Error("MyAnimeList authorization timed out. Please try again.");
     } catch (error) {
+        if (state.setup.malAttemptId !== attemptId) return;
+
         state.setup.malMessage = error.message || "MyAnimeList connection failed.";
         state.setup.busy = false;
         state.setup.status = await call("setup_status").catch(() => state.setup.status);

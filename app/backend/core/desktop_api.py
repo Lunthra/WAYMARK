@@ -1297,8 +1297,10 @@ def setup_status() -> dict[str, Any]:
 
 
 def mal_auth_start(client_id: str | None = None) -> dict[str, Any]:
-    if client_id:
-        set_mal_client_id(client_id)
+    # Do not persist a client ID merely because an OAuth attempt started.
+    # The current attempt uses the explicit value directly; auth.py persists
+    # it only after MAL token exchange succeeds. This keeps failed IDs from
+    # becoming sticky and allows the user to replace a bad ID on retry.
     return start_mal_auth(client_id)
 
 
