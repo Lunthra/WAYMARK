@@ -6,7 +6,7 @@ It brings supported services into one desktop application so you can search for 
 
 ## Current Release
 
-**Version:** `1.0.0`
+**Version:** `1.1.0`
 **Platform:** Windows x64
 **Release format:** Portable ZIP
 
@@ -21,7 +21,13 @@ WAYMARK currently supports:
 * Watch progress
 * Status updates
 * Ratings
-* Reading existing anime information and account data
+* Existing anime and account information
+* Artwork
+* Improved authentication and account connection handling
+* PKCE-based OAuth authentication
+* Localhost OAuth callback
+* Recovery from incorrect Client IDs
+* Authentication retry handling
 
 ### Serializd
 
@@ -36,6 +42,11 @@ WAYMARK currently supports:
 * Season, episode, and series reviews
 * Review editing and deletion
 * Personal library/history integration
+* Currently Watching
+* Rewatch workflows
+* Improved watched-state handling
+* Improved artwork
+* Faster library and diary retrieval
 
 ## Features
 
@@ -44,14 +55,94 @@ WAYMARK currently supports:
 * Watch history
 * Media details
 * Guided watch workflow
+* Season and episode selection
 * Episode and season progress tracking
+* Currently Watching
+* Continue Watching
+* Rewatch workflow
 * Ratings
+* Series, season, and episode ratings where supported
 * Reviews
+* Existing rating lookup
 * Personal profile
+* Custom display name
+* Custom profile picture
+* Custom background image
+* Persistent personalization
+* Artwork-focused dashboard
+* Featured and Continue Watching carousel
 * First-run account setup
 * Local application data
 * Windows desktop application
 * Portable release — no traditional installer required
+
+## What's New in v1.1.0
+
+WAYMARK `1.1.0` is a major update focused on making the application faster, more complete, and more personal.
+
+### Personalization
+
+* Custom display name
+* Custom profile picture
+* Custom background image
+* Persistent personalization across application restarts
+* Background artwork integrated into the WAYMARK interface
+* Improved profile and personalization controls
+
+### Home & Dashboard
+
+* Expanded home dashboard
+* Featured and Continue Watching carousel
+* Improved artwork presentation
+* Continue Watching integration with Serializd
+* Currently Watching information combined across supported services
+* Faster dashboard and library loading
+* Improved loading states
+* Protection against stale asynchronous requests
+
+### Watch Workflow
+
+* More complete Watch flow
+* Improved season selection
+* Improved episode selection
+* Better progress tracking
+* Improved currently-watching state handling
+* Rewatch workflow
+* Ability to decide whether a show should be marked as currently watching
+* Improved completion and watched-state handling
+* Reduced blocking while selecting seasons and episodes
+
+### Ratings & Reviews
+
+* Series, season, and episode rating support where supported
+* Existing rating lookup
+* Rating updates
+* Rating changes synchronized with watched state
+* Improved review workflow
+* Improved rating and review operations
+* Reduced interface blocking during rating lookups
+
+### Performance
+
+* Reduced Serializd library N+1 requests
+* Improved concurrent page retrieval
+* Indexed and cached diary data
+* Reduced renderer blocking
+* Improved asynchronous loading
+* Improved artwork loading and normalization
+* Reused frontend library state
+* Improved currently-watching retrieval
+* Reduced unnecessary backend and service requests
+
+### Reliability
+
+* Improved MAL authentication and recovery
+* Improved Serializd currently-watching handling
+* Improved completed-show/currently-watching behavior
+* Improved authentication retry and cancellation
+* Improved stale request handling
+* Improved packaged resource loading
+* Improved stability across Watch, Rating, Review, Library, and Dashboard workflows
 
 ## First-Run Setup
 
@@ -61,6 +152,8 @@ You can connect your supported services and choose the name WAYMARK should use f
 
 Your profile name can later be changed from the application settings.
 
+You can also customize your profile picture and background from the personalization controls.
+
 Existing installations that already contain supported credentials can continue using them.
 
 ## Download
@@ -69,13 +162,24 @@ The latest Windows release is available from the GitHub Releases page.
 
 Download:
 
-**`WAYMARK-win32-x64-1.0.0.zip`**
+**`WAYMARK-win32-x64-1.1.0.zip`**
 
 Extract the ZIP and launch:
 
 **`WAYMARK.exe`**
 
-WAYMARK is distributed as a portable Windows application in this release.
+WAYMARK is distributed as a portable Windows application.
+
+## Upgrade from v1.0.0
+
+If you are upgrading from WAYMARK `1.0.0`:
+
+1. Download `WAYMARK-win32-x64-1.1.0.zip`.
+2. Extract the new release.
+3. Launch `WAYMARK.exe`.
+4. Continue using your existing supported service accounts.
+
+Personal application data and credentials are stored separately from the packaged release and are not included in the release ZIP.
 
 ## Privacy and Local Data
 
@@ -95,6 +199,8 @@ Sensitive files such as:
 are not intended to be committed to the repository.
 
 WAYMARK also keeps user-specific application data in the local application data area on Windows.
+
+Personal application data and credentials are **not included in the public release ZIP**.
 
 ## Running From Source
 
@@ -173,22 +279,78 @@ WAYMARK/
 
 The application is organized into a Python backend, web-based frontend, and Electron desktop shell.
 
+### Backend Architecture
+
+The desktop application uses the following general flow:
+
+```text
+Electron Renderer
+        ↓
+    preload.js
+        ↓
+     main.js
+        ↓
+Authenticated Local HTTP Bridge
+        ↓
+ bridge_server.py
+        ↓
+   desktop_api.py
+        ↓
+   waymark_core.py
+        ↓
+ ┌──────┼────────┐
+ ↓      ↓        ↓
+MAL  Serializd  TMDB
+```
+
+The Electron renderer is responsible for the user interface, while the Python backend handles application logic, service integrations, authentication, and local data operations.
+
 ## Release Status
 
-WAYMARK `1.0.0` represents the first packaged Windows release of the application.
+WAYMARK `1.1.0` is the current packaged Windows release.
 
 The release has been tested as a standalone packaged application, including:
 
 * Application startup
 * Backend startup
-* MAL integration
+* MAL authentication
+* MAL library and progress workflows
 * Serializd integration
+* Serializd library and diary retrieval
+* Dashboard artwork
+* Continue Watching
+* Currently Watching
+* Watch workflow
+* Season and episode selection
+* Rewatch workflow
 * Watch progress
+* Watched-state handling
 * Ratings
 * Reviews
-* Personal profile
+* Existing rating lookup
+* Personalization
+* Profile picture
+* Display name
+* Background image
 * Packaged frontend assets
 * Application branding
+* Application restart and persistence
+
+## Release Artifact
+
+The current release is distributed as:
+
+**Windows x64 Portable ZIP**
+
+Release asset:
+
+**`WAYMARK-win32-x64-1.1.0.zip`**
+
+SHA-256:
+
+```text
+5E318D39A584C096A9E90D56048421BB4C5BF8EBE79265FC7056323938B30BBF
+```
 
 ## Project
 
