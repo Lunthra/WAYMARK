@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
@@ -38,8 +39,10 @@ REQUEST_DELAY = 0.4
 CACHE_TTL_SHOW = 300.0
 CACHE_TTL_SEASON = 300.0
 CACHE_TTL_WATCHED_LIBRARY = 30.0
+CACHE_TTL_CURRENTLY_WATCHING = 30.0
 CACHE_TTL_WATCHED_EPISODES = 20.0
 CACHE_TTL_DIARY = 45.0
+CACHE_TTL_DIARY_INDEX = 45.0
 CACHE_TTL_SEARCH = 60.0
 SERIALIZD_PERF_LOG = os.getenv("WAYMARK_SERIALIZD_PERF_LOG", "1").strip().lower() not in {"0", "false", "no", "off"}
 
@@ -49,6 +52,7 @@ class SerializdError(Exception):
 
 
 _session = requests.Session()
+_thread_local = threading.local()
 _cache_lock = threading.RLock()
 _cache: dict[str, tuple[float, Any]] = {}
 
@@ -72,6 +76,17 @@ def _cache_set(key: str, value: Any, ttl: float) -> Any:
     return value
 
 
+def _write_delay(delay_after: bool) -> None:
+    """Throttle consecutive Serializd writes without forcing a trailing wait.
+
+    The private API is commonly used with a short inter-write delay. WAYMARK
+    keeps the existing 0.4s spacing by default, but callers can suppress the
+    final sleep when no subsequent Serializd write is pending.
+    """
+    if delay_after and REQUEST_DELAY > 0:
+        time.sleep(REQUEST_DELAY)
+
+
 def _cache_delete_prefix(prefix: str) -> None:
     with _cache_lock:
         for key in list(_cache):
@@ -85,6 +100,7 @@ def _invalidate_show(show_id: int, season_id: int | None = None) -> None:
     for prefix in prefixes:
         _cache_delete_prefix(prefix)
     _cache_delete_prefix("watched_library:")
+    _cache_delete_prefix("currently_watching:")
     _cache_delete_prefix("diary:")
 
 
@@ -170,6 +186,15 @@ def _headers() -> dict[str, str]:
     }
 
 
+def _request_session():
+    """Return a thread-local requests session for safe bounded parallel reads."""
+    session = getattr(_thread_local, "session", None)
+    if session is None:
+        session = requests.Session()
+        _thread_local.session = session
+    return session
+
+
 def _request(
     method: str,
     url: str,
@@ -179,7 +204,8 @@ def _request(
 ) -> Any:
     """Perform an authenticated Serializd request using a pooled session."""
     started = time.monotonic()
-    response = _session.request(
+    session = _session if threading.current_thread() is threading.main_thread() else _request_session()
+    response = session.request(
         method,
         url,
         headers=_headers(),
@@ -243,39 +269,209 @@ def get_username() -> str:
 # ============================================================
 
 
-def get_watched_library() -> list[dict[str, Any]]:
-    """Return all shows in the user's Serializd watched library."""
+def _normalize_image_reference(value: Any) -> str | None:
+    """Normalize a Serializd/TMDB artwork reference into a browser URL."""
+    if isinstance(value, dict):
+        for key in (
+            "large", "medium", "original", "url", "src", "imageUrl",
+            "image_url", "path", "file_path", "href",
+        ):
+            candidate = _normalize_image_reference(value.get(key))
+            if candidate:
+                return candidate
+        return None
 
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if value.startswith("//"):
+        return "https:" + value
+    if value.startswith("http://"):
+        return "https://" + value[len("http://"):]
+    if value.startswith("/"):
+        return "https://image.tmdb.org/t/p/w500" + value
+    if value.startswith("image.tmdb.org/"):
+        return "https://" + value
+    return value if value.startswith("https://") else None
+
+
+def _find_image_reference(value: Any, depth: int = 0) -> str | None:
+    """Find poster-like artwork without making another network request."""
+    if depth > 5:
+        return None
+    if isinstance(value, (list, tuple)):
+        for child in value:
+            found = _find_image_reference(child, depth + 1)
+            if found:
+                return found
+        return None
+    if not isinstance(value, dict):
+        return None
+
+    preferred = (
+        "image_url", "imageUrl", "image", "posterUrl", "poster_url", "poster",
+        "posterPath", "poster_path", "imagePath", "image_path", "showImage",
+        "show_image", "showPoster", "show_poster", "bannerImage", "banner_image",
+        "showBannerImage", "show_banner_image", "coverUrl", "cover_url",
+        "cover", "thumbnail", "thumb", "artwork", "artworkUrl", "artwork_url",
+        "src", "href",
+    )
+    for key in preferred:
+        if key in value:
+            found = _normalize_image_reference(value.get(key))
+            if found:
+                return found
+
+    # The watched-page schema has changed over time. Search only keys whose
+    # names indicate artwork rather than recursively scanning arbitrary text.
+    for key, child in value.items():
+        key_text = str(key).lower()
+        if any(token in key_text for token in ("image", "poster", "cover", "artwork", "thumbnail")):
+            found = _find_image_reference(child, depth + 1)
+            if found:
+                return found
+
+    # Artwork can be nested below generic wrappers such as data/media.
+    for child in value.values():
+        if isinstance(child, (dict, list, tuple)):
+            found = _find_image_reference(child, depth + 1)
+            if found:
+                return found
+
+    for key in ("show", "media", "data", "item", "title", "showDetails", "show_details"):
+        child = value.get(key)
+        if isinstance(child, (dict, list)):
+            found = _find_image_reference(child, depth + 1)
+            if found:
+                return found
+    return None
+
+
+def _normalize_watched_library_item(item: Any) -> Any:
+    if not isinstance(item, dict):
+        return item
+    normalized = dict(item)
+    existing = _normalize_image_reference(normalized.get("image_url"))
+    if existing:
+        normalized["image_url"] = existing
+    else:
+        image = _find_image_reference(normalized)
+        if image:
+            normalized["image_url"] = image
+    return normalized
+
+
+def get_watched_library() -> list[dict[str, Any]]:
+    """Return all watched shows with artwork normalized from the watched-page payload.
+
+    The library path never enriches each show with a separate show-detail request.
+    That keeps Library/Home O(pages) instead of O(shows).
+    """
     cached = _cache_get("watched_library:all")
     if isinstance(cached, list):
         return cached
 
     username = get_username()
-    first_page = 1
-    page = first_page
-    results: list[dict[str, Any]] = []
+    params = {"sort_by": "date_added_desc", "filters": "{}"}
 
-    while True:
+    first = _request(
+        "GET",
+        f"{BASE_URL}/user/{username}/watchedpage_v2/1",
+        params=params,
+    )
+    total_pages = max(1, int(first.get("totalPages", 1)))
+    pages: list[list[dict[str, Any]]] = [
+        [item for item in (first.get("items") or []) if isinstance(item, dict)]
+    ]
+
+    def fetch_page(page: int) -> list[dict[str, Any]]:
         data = _request(
             "GET",
             f"{BASE_URL}/user/{username}/watchedpage_v2/{page}",
-            params={
-                "sort_by": "date_added_desc",
-                "filters": "{}",
-            },
+            params=params,
         )
+        return [item for item in (data.get("items") or []) if isinstance(item, dict)]
 
-        results.extend(data.get("items", []))
+    if total_pages > 1:
+        # Four workers is enough to remove the old artificial 0.4s-per-page
+        # delay without opening an unbounded request fan-out.
+        with ThreadPoolExecutor(max_workers=min(4, total_pages - 1)) as executor:
+            pages.extend(executor.map(fetch_page, range(2, total_pages + 1)))
 
-        total_pages = int(data.get("totalPages", page))
-
-        if page >= total_pages:
-            break
-
-        page += 1
-        time.sleep(REQUEST_DELAY)
-
+    results = [
+        _normalize_watched_library_item(item)
+        for page_items in pages
+        for item in page_items
+    ]
     return _cache_set("watched_library:all", results, CACHE_TTL_WATCHED_LIBRARY)
+
+
+def _serializd_show_id(item: Any) -> int | None:
+    """Extract a show ID from the known Serializd response shapes."""
+    if not isinstance(item, dict):
+        return None
+    candidates = [item.get("showId"), item.get("show_id"), item.get("id")]
+    nested = item.get("show")
+    if isinstance(nested, dict):
+        candidates.extend([nested.get("showId"), nested.get("show_id"), nested.get("id")])
+    for raw in candidates:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def get_currently_watching() -> list[dict[str, Any]]:
+    """Return the account's Serializd currently-watching shows.
+
+    Serializd exposes a dedicated ``currently_watching_page`` surface. It is
+    intentionally used instead of enriching every watched-library row with a
+    show-detail request, so Home/Library can know the user's live status without
+    recreating the N+1 request problem we already removed.
+    """
+    cached = _cache_get("currently_watching:all")
+    if isinstance(cached, list):
+        return cached
+
+    username = get_username()
+    params = {"sort_by": "date_added_desc"}
+    first = _request(
+        "GET",
+        f"{BASE_URL}/user/{username}/currently_watching_page/1",
+        params=params,
+    )
+    total_pages = max(1, int(first.get("totalPages", 1)))
+    pages: list[list[dict[str, Any]]] = [
+        [item for item in (first.get("items") or []) if isinstance(item, dict)]
+    ]
+
+    def fetch_page(page: int) -> list[dict[str, Any]]:
+        data = _request(
+            "GET",
+            f"{BASE_URL}/user/{username}/currently_watching_page/{page}",
+            params=params,
+        )
+        return [item for item in (data.get("items") or []) if isinstance(item, dict)]
+
+    if total_pages > 1:
+        with ThreadPoolExecutor(max_workers=min(4, total_pages - 1)) as executor:
+            pages.extend(executor.map(fetch_page, range(2, total_pages + 1)))
+
+    results: list[dict[str, Any]] = []
+    for page_items in pages:
+        for item in page_items:
+            normalized = dict(item)
+            image = _normalize_image_reference(normalized.get("image_url")) or _find_image_reference(normalized)
+            if image:
+                normalized["image_url"] = image
+            results.append(normalized)
+
+    return _cache_set("currently_watching:all", results, CACHE_TTL_CURRENTLY_WATCHING)
 
 
 def find_in_watched_library(query: str) -> list[dict[str, Any]]:
@@ -333,28 +529,73 @@ def get_diary(page: int = 1) -> dict[str, Any]:
 
 
 def get_full_diary() -> list[dict[str, Any]]:
-    """Return all diary entries across all diary pages."""
+    """Return all diary entries across all diary pages.
+
+    Page 1 determines the total page count. Remaining pages are read in a
+    bounded pool, matching the existing watched-library strategy. The diary
+    endpoint is read-only, and the per-page cache remains authoritative.
+    """
 
     cached = _cache_get("diary:all")
     if isinstance(cached, list):
         return cached
 
-    page = 1
-    entries: list[dict[str, Any]] = []
+    first = get_diary(1)
+    total_pages = max(1, int(first.get("totalPages", 1)))
+    pages: list[list[dict[str, Any]]] = [
+        list(first.get("reviews", [])) if isinstance(first.get("reviews", []), list) else []
+    ]
 
-    while True:
-        data = get_diary(page)
-        entries.extend(data.get("reviews", []))
+    if total_pages > 1:
+        def fetch_page(page_number: int) -> list[dict[str, Any]]:
+            data = get_diary(page_number)
+            reviews = data.get("reviews", []) if isinstance(data, dict) else []
+            return reviews if isinstance(reviews, list) else []
 
-        total_pages = int(data.get("totalPages", page))
+        with ThreadPoolExecutor(max_workers=min(4, total_pages - 1)) as executor:
+            futures = [executor.submit(fetch_page, page) for page in range(2, total_pages + 1)]
+            pages.extend(future.result() for future in futures)
 
-        if page >= total_pages:
-            break
-
-        page += 1
-        time.sleep(REQUEST_DELAY)
-
+    entries = [entry for page_entries in pages for entry in page_entries]
+    # A refreshed diary invalidates the derived lookup index so the index
+    # can never outlive the underlying diary snapshot.
+    _cache_delete_prefix("diary:index")
     return _cache_set("diary:all", entries, CACHE_TTL_DIARY)
+
+
+def _diary_entry_key(show_id: int, season_id: Any = None, episode_number: Any = None) -> str:
+    season = "" if season_id in (None, "") else str(season_id)
+    episode = "" if episode_number in (None, "") else str(episode_number)
+    return f"{int(show_id)}|{season}|{episode}"
+
+
+def get_diary_index() -> dict[str, list[dict[str, Any]]]:
+    """Build a short-lived lookup index over the current diary snapshot."""
+    # Never serve an index whose underlying diary snapshot has expired.
+    if not isinstance(_cache_get("diary:all"), list):
+        _cache_delete_prefix("diary:index")
+
+    cached = _cache_get("diary:index")
+    if isinstance(cached, dict):
+        return cached
+
+    index: dict[str, list[dict[str, Any]]] = {}
+    for entry in get_full_diary():
+        if not isinstance(entry, dict):
+            continue
+        try:
+            show_id = int(entry.get("showId"))
+        except (TypeError, ValueError):
+            continue
+        key = _diary_entry_key(show_id, entry.get("seasonId"), entry.get("episodeNumber"))
+        index.setdefault(key, []).append(entry)
+
+    return _cache_set("diary:index", index, CACHE_TTL_DIARY_INDEX)
+
+
+def find_diary_entries(show_id: int, season_id: int | None = None, episode_number: int | None = None) -> list[dict[str, Any]]:
+    """Find diary entries for a series, season, or episode without rescanning."""
+    return list(get_diary_index().get(_diary_entry_key(show_id, season_id, episode_number), []))
 
 
 # ============================================================
@@ -508,10 +749,55 @@ def resolve_episode(
 # ============================================================
 
 
+def set_show_status(show_id: int, status: str, *, delay_after: bool = True) -> dict[str, Any]:
+    """Set the supported Serializd show-level tracking state.
+
+    The current Serializd web client uses ``POST /api/currently_watching``
+    with a JSON ``show_id`` payload to add a show to the user's Currently
+    Watching list.  This route was verified against the live web client.
+
+    Serializd's private API does not expose a verified generic ``show/status``
+    route, so do not fall back to speculative endpoints here.
+    """
+    show_id = int(show_id)
+    status = str(status or "").strip().lower()
+    if show_id <= 0:
+        raise ValueError("Serializd show ID is required.")
+
+    if status == "watching":
+        result = _request(
+            "POST",
+            f"{BASE_URL}/api/currently_watching",
+            json={"show_id": show_id},
+        )
+        _invalidate_show(show_id)
+        _write_delay(delay_after)
+        return result if result is not None else {"ok": True, "status": "watching"}
+
+    if status == "completed":
+        raise SerializdError(
+            "Serializd completed-show status write has not been verified. "
+            "The current web-client evidence only verifies the Currently Watching add route."
+        )
+
+    raise ValueError("Serializd show status must be watching or completed.")
+
+
+def mark_show_watching(show_id: int, *, delay_after: bool = True) -> dict[str, Any]:
+    """Mark a Serializd show as currently watching."""
+    return set_show_status(show_id, "watching", delay_after=delay_after)
+
+
+def mark_show_completed(show_id: int, *, delay_after: bool = True) -> dict[str, Any]:
+    """Mark a Serializd show as completed when a verified route exists."""
+    return set_show_status(show_id, "completed", delay_after=delay_after)
+
 def mark_episode_watched(
     show_id: int,
     season_id: int,
     episode_number: int,
+    *,
+    delay_after: bool = True,
 ) -> dict[str, Any]:
     """Mark one episode as watched on Serializd."""
 
@@ -528,13 +814,15 @@ def mark_episode_watched(
     )
 
     _invalidate_show(int(show_id), int(season_id) if "season_id" in locals() and season_id is not None else None)
-    time.sleep(REQUEST_DELAY)
+    _write_delay(delay_after)
     return result
 
 
 def mark_season_watched(
     show_id: int,
     season_id: int,
+    *,
+    delay_after: bool = True,
 ) -> dict[str, Any]:
     """Mark an entire Serializd season as watched."""
     payload = {
@@ -547,11 +835,11 @@ def mark_season_watched(
         json=payload,
     )
     _invalidate_show(int(show_id), int(season_id) if "season_id" in locals() and season_id is not None else None)
-    time.sleep(REQUEST_DELAY)
+    _write_delay(delay_after)
     return result
 
 
-def mark_series_watched(show_id: int) -> dict[str, Any]:
+def mark_series_watched(show_id: int, *, delay_after: bool = True) -> dict[str, Any]:
     """Mark all available seasons of a Serializd series as watched."""
     show = _request(
         "GET",
@@ -579,7 +867,7 @@ def mark_series_watched(show_id: int) -> dict[str, Any]:
         json=payload,
     )
     _invalidate_show(int(show_id))
-    time.sleep(REQUEST_DELAY)
+    _write_delay(delay_after)
     return result
 
 
@@ -587,6 +875,8 @@ def unmark_episode_watched(
     show_id: int,
     season_id: int,
     episode_number: int,
+    *,
+    delay_after: bool = True,
 ) -> dict[str, Any]:
     """Remove one episode's watched state on Serializd."""
 
@@ -603,7 +893,7 @@ def unmark_episode_watched(
     )
 
     _invalidate_show(int(show_id), int(season_id) if "season_id" in locals() and season_id is not None else None)
-    time.sleep(REQUEST_DELAY)
+    _write_delay(delay_after)
     return result
 
 
@@ -663,6 +953,7 @@ def log_season_review(
     show_id: int,
     season_id: int,
     *,
+    delay_after: bool = True,
     stars: float | None = None,
     review_text: str = "",
     is_rewatch: bool = False,
@@ -709,13 +1000,14 @@ def log_season_review(
         json=payload,
     )
     _invalidate_show(int(show_id), int(season_id) if "season_id" in locals() and season_id is not None else None)
-    time.sleep(REQUEST_DELAY)
+    _write_delay(delay_after)
     return result
 
 
 def log_series_review(
     show_id: int,
     *,
+    delay_after: bool = True,
     stars: float | None = None,
     review_text: str = "",
     is_rewatch: bool = False,
@@ -767,12 +1059,12 @@ def log_series_review(
         json=payload,
     )
     _invalidate_show(int(show_id))
-    time.sleep(REQUEST_DELAY)
+    _write_delay(delay_after)
     return result
 
 
 
-def _rating_request(payload: dict[str, Any]) -> Any:
+def _rating_request(payload: dict[str, Any], *, delay_after: bool = True) -> Any:
     """Write a rating through Serializd's current API host.
 
     Rating writes are isolated from the legacy desktop proxy used by the
@@ -793,7 +1085,7 @@ def _rating_request(payload: dict[str, Any]) -> Any:
                 f"Current API: {primary_exc}; legacy proxy: {fallback_exc}"
             ) from fallback_exc
     _invalidate_show(int(payload.get("show_id") or 0), int(payload.get("season_id")) if payload.get("season_id") not in (None, "", 0) else None)
-    time.sleep(REQUEST_DELAY)
+    _write_delay(delay_after)
     return result
 
 
@@ -802,6 +1094,8 @@ def rate_episode(
     season_id: int,
     episode_number: int,
     stars: float,
+    *,
+    delay_after: bool = True,
 ) -> dict[str, Any]:
     """Rate one episode without requiring review text."""
     stars = float(stars)
@@ -822,11 +1116,11 @@ def rate_episode(
         "allows_comments": True,
         "like": False,
     }
-    result = _rating_request(payload)
+    result = _rating_request(payload, delay_after=delay_after)
     return result
 
 
-def rate_season(show_id: int, season_id: int, stars: float) -> dict[str, Any]:
+def rate_season(show_id: int, season_id: int, stars: float, *, delay_after: bool = True) -> dict[str, Any]:
     """Rate one season without requiring review text."""
     stars = float(stars)
     doubled = stars * 2
@@ -846,11 +1140,11 @@ def rate_season(show_id: int, season_id: int, stars: float) -> dict[str, Any]:
         "allows_comments": True,
         "like": False,
     }
-    result = _rating_request(payload)
+    result = _rating_request(payload, delay_after=delay_after)
     return result
 
 
-def rate_series(show_id: int, stars: float) -> dict[str, Any]:
+def rate_series(show_id: int, stars: float, *, delay_after: bool = True) -> dict[str, Any]:
     """Rate one series without requiring review text."""
     stars = float(stars)
     doubled = stars * 2
@@ -870,7 +1164,7 @@ def rate_series(show_id: int, stars: float) -> dict[str, Any]:
         "allows_comments": True,
         "like": False,
     }
-    result = _rating_request(payload)
+    result = _rating_request(payload, delay_after=delay_after)
     return result
 
 
@@ -915,23 +1209,8 @@ def get_episode_diary_entries(
     season_id: int,
     episode_number: int,
 ) -> list[dict[str, Any]]:
-    """Return diary entries matching a specific episode."""
-
-    matches: list[dict[str, Any]] = []
-
-    for entry in get_full_diary():
-        if int(entry.get("showId", -1)) != int(show_id):
-            continue
-
-        if int(entry.get("seasonId", -1)) != int(season_id):
-            continue
-
-        if int(entry.get("episodeNumber", -1)) != int(episode_number):
-            continue
-
-        matches.append(entry)
-
-    return matches
+    """Return diary entries matching a specific episode from the index."""
+    return find_diary_entries(show_id, season_id, episode_number)
 
 
 def log_episode(
@@ -939,6 +1218,7 @@ def log_episode(
     season_id: int,
     episode_number: int,
     *,
+    delay_after: bool = True,
     stars: float | None = None,
     review_text: str = "",
     is_rewatch: bool = False,
@@ -984,7 +1264,7 @@ def log_episode(
         json=payload,
     )
     _invalidate_show(int(show_id), int(season_id) if "season_id" in locals() and season_id is not None else None)
-    time.sleep(REQUEST_DELAY)
+    _write_delay(delay_after)
     return result
 
 
@@ -992,6 +1272,7 @@ def log_episode(
 def update_review_log(
     review_id: int,
     *,
+    delay_after: bool = True,
     show_id: int | None = None,
     season_id: int | None = None,
     review_text: str = "",
@@ -1059,13 +1340,14 @@ def update_review_log(
         json=payload,
     )
     _invalidate_show(int(show_id), int(season_id) if "season_id" in locals() and season_id is not None else None)
-    time.sleep(REQUEST_DELAY)
+    _write_delay(delay_after)
     return result
 
 
 def update_rating_log(
     review_id: int,
     *,
+    delay_after: bool = True,
     show_id: int,
     season_id: int | None = None,
     episode_number: int | None = None,
@@ -1109,11 +1391,11 @@ def update_rating_log(
                 f"Current API: {primary_exc}; legacy proxy: {fallback_exc}"
             ) from fallback_exc
     _invalidate_show(int(show_id), int(season_id) if "season_id" in locals() and season_id is not None else None)
-    time.sleep(REQUEST_DELAY)
+    _write_delay(delay_after)
     return result
 
 
-def delete_review_log(review_id: int) -> dict[str, Any] | None:
+def delete_review_log(review_id: int, *, delay_after: bool = True) -> dict[str, Any] | None:
     """Delete an existing Serializd review/log entry."""
     result = _request(
         "POST",
@@ -1121,7 +1403,7 @@ def delete_review_log(review_id: int) -> dict[str, Any] | None:
         json={"review_id": int(review_id)},
     )
     _cache_delete_prefix("diary:")
-    time.sleep(REQUEST_DELAY)
+    _write_delay(delay_after)
     return result
 
 

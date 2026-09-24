@@ -1,6 +1,6 @@
 {
     "name": "waymark-desktop",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "WAYMARK desktop media operating system",
     "main": "main.js",
     "scripts": {

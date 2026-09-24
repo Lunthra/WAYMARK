@@ -3,7 +3,12 @@ const state = {
         displayName: "",
         loaded: false,
         firstRun: false,
-        editing: false
+        editing: false,
+        personalization: {
+            avatar: null,
+            background: null,
+            accent: "purple"
+        }
     },
     setup: {
         active: false,
@@ -39,6 +44,8 @@ const state = {
         malEpisodes: [],
         status: "watching",
         serializdCompleted: false,
+        serializdCurrentlyWatching: null,
+        serializdWatchingChoice: null,
         serializdRewatch: null,
         confirmation: false
     },
@@ -68,7 +75,8 @@ const state = {
         history: null,
         library: null,
         loading: false,
-        requestId: 0
+        requestId: 0,
+        featuredIndex: 0
     },
     rate: {
         query: "",
@@ -90,6 +98,7 @@ const state = {
         serializdRating: "",
         serializdProgressTarget: "",
         serializdExisting: null,
+        serializdRatingTouched: false,
         confirmation: false,
         pending: null
     },
@@ -99,6 +108,7 @@ const state = {
 const view = document.getElementById("view");
 const label = document.getElementById("page-label");
 const toast = document.getElementById("toast");
+let watchSerializdSelectionGeneration = 0;
 
 function esc(value) {
     const text = String(value ?? "")
@@ -147,9 +157,129 @@ function setRoute(route) {
 
 
 
+const PERSONALIZATION_ACCENTS = {
+    purple: { color: "#9b6cff", strong: "#b18aff", text: "#100b18", glow: "rgba(155,108,255,.28)" },
+    blue: { color: "#4f8cff", strong: "#72a5ff", text: "#07101f", glow: "rgba(79,140,255,.28)" },
+    cyan: { color: "#27c7e8", strong: "#63dbf2", text: "#06151a", glow: "rgba(39,199,232,.25)" },
+    green: { color: "#3bd98c", strong: "#70e8aa", text: "#06150d", glow: "rgba(59,217,140,.24)" },
+    yellow: { color: "#e8c94a", strong: "#f1d96b", text: "#171204", glow: "rgba(232,201,74,.22)" },
+    orange: { color: "#f28a42", strong: "#ffa86e", text: "#1b0c03", glow: "rgba(242,138,66,.24)" },
+    red: { color: "#ef5d70", strong: "#ff8494", text: "#1a060a", glow: "rgba(239,93,112,.24)" },
+    pink: { color: "#e86bb8", strong: "#f38bca", text: "#180914", glow: "rgba(232,107,184,.24)" }
+};
+
+const PERSONALIZATION_DB_NAME = "waymark-personalization";
+const PERSONALIZATION_DB_VERSION = 1;
+const PERSONALIZATION_STORE = "preferences";
+const PERSONALIZATION_KEY = "profile";
+let personalizationDbPromise = null;
+
+function openPersonalizationDb() {
+    if (personalizationDbPromise) return personalizationDbPromise;
+    personalizationDbPromise = new Promise((resolve, reject) => {
+        if (!window.indexedDB) {
+            reject(new Error("WAYMARK personalization storage is unavailable."));
+            return;
+        }
+        const request = window.indexedDB.open(PERSONALIZATION_DB_NAME, PERSONALIZATION_DB_VERSION);
+        request.onupgradeneeded = () => {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(PERSONALIZATION_STORE)) {
+                db.createObjectStore(PERSONALIZATION_STORE);
+            }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error || new Error("Could not open personalization storage."));
+    });
+    return personalizationDbPromise;
+}
+
+async function loadPersonalization() {
+    try {
+        const db = await openPersonalizationDb();
+        const value = await new Promise((resolve, reject) => {
+            const tx = db.transaction(PERSONALIZATION_STORE, "readonly");
+            const request = tx.objectStore(PERSONALIZATION_STORE).get(PERSONALIZATION_KEY);
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => reject(request.error || new Error("Could not read personalization storage."));
+        });
+        if (value && typeof value === "object") {
+            state.profile.personalization = {
+                avatar: typeof value.avatar === "string" ? value.avatar : null,
+                background: typeof value.background === "string" ? value.background : null,
+                accent: PERSONALIZATION_ACCENTS[value.accent] ? value.accent : "purple"
+            };
+        }
+    } catch (error) {
+        console.warn("[WAYMARK] personalization storage unavailable:", error);
+    }
+}
+
+async function savePersonalization() {
+    const snapshot = {
+        avatar: state.profile.personalization.avatar || null,
+        background: state.profile.personalization.background || null,
+        accent: PERSONALIZATION_ACCENTS[state.profile.personalization.accent] ? state.profile.personalization.accent : "purple"
+    };
+    try {
+        const db = await openPersonalizationDb();
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction(PERSONALIZATION_STORE, "readwrite");
+            tx.objectStore(PERSONALIZATION_STORE).put(snapshot, PERSONALIZATION_KEY);
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error || new Error("Could not save personalization."));
+            tx.onabort = () => reject(tx.error || new Error("Could not save personalization."));
+        });
+        return true;
+    } catch (error) {
+        console.warn("[WAYMARK] personalization save failed:", error);
+        msg("Appearance could not be saved permanently.");
+        return false;
+    }
+}
+
 function profileInitial(name) {
     const value = String(name || "").trim();
     return value ? value.charAt(0).toUpperCase() : "W";
+}
+
+function applyPersonalization() {
+    const root = document.documentElement;
+    const accent = PERSONALIZATION_ACCENTS[state.profile.personalization.accent] || PERSONALIZATION_ACCENTS.purple;
+    root.style.setProperty("--accent", accent.color);
+    root.style.setProperty("--accent-strong", accent.strong);
+    root.style.setProperty("--accent-text", accent.text);
+    root.style.setProperty("--accent-glow", accent.glow);
+    root.style.setProperty("--accent-soft", `${hexToRgba(accent.color, 0.14)}`);
+    root.style.setProperty("--accent-strong-soft", `${hexToRgba(accent.color, 0.20)}`);
+    if (state.profile.personalization.background) {
+        root.style.setProperty("--waymark-background-image", `url("${state.profile.personalization.background}")`);
+        document.body.classList.add("has-waymark-background");
+    } else {
+        root.style.setProperty("--waymark-background-image", "none");
+        document.body.classList.remove("has-waymark-background");
+    }
+    updateProfileChrome();
+}
+
+function hexToRgba(hex, alpha) {
+    const value = String(hex || "").replace("#", "");
+    if (value.length !== 6) return `rgba(155,108,255,${alpha})`;
+    const number = Number.parseInt(value, 16);
+    const r = (number >> 16) & 255;
+    const g = (number >> 8) & 255;
+    const b = number & 255;
+    return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function personalizationPreviewStyle(type) {
+    if (type === "avatar" && state.profile.personalization.avatar) {
+        return `background-image:url("${state.profile.personalization.avatar}");`;
+    }
+    if (type === "background" && state.profile.personalization.background) {
+        return `background-image:url("${state.profile.personalization.background}");`;
+    }
+    return "";
 }
 
 function updateProfileChrome() {
@@ -159,7 +289,13 @@ function updateProfileChrome() {
     const markNode = profile.querySelector(".profile-mark");
     const name = state.profile.displayName.trim();
     if (nameNode) nameNode.textContent = name || "WAYMARK";
-    if (markNode) markNode.textContent = profileInitial(name);
+    if (markNode) {
+        markNode.textContent = state.profile.personalization.avatar ? "" : profileInitial(name);
+        markNode.classList.toggle("has-avatar", !!state.profile.personalization.avatar);
+        markNode.style.backgroundImage = state.profile.personalization.avatar
+            ? `url("${state.profile.personalization.avatar}")`
+            : "";
+    }
     profile.title = name ? `Profile: ${name}` : "WAYMARK profile";
 }
 
@@ -167,65 +303,122 @@ async function loadProfile() {
     try {
         const profile = await call("profile_get");
         state.profile.displayName = String(profile?.display_name || "").trim();
+        await loadPersonalization();
         state.profile.loaded = true;
-        updateProfileChrome();
+        applyPersonalization();
         return state.profile;
     } catch (error) {
         console.error("[WAYMARK] profile unavailable:", error);
+        await loadPersonalization();
         state.profile.loaded = true;
-        updateProfileChrome();
+        applyPersonalization();
         return state.profile;
     }
+}
+
+function accentChoices() {
+    return Object.entries(PERSONALIZATION_ACCENTS).map(([key, value]) => `
+        <button type="button" class="accent-swatch ${state.profile.personalization.accent === key ? "selected" : ""}" data-action="profile-accent" data-accent="${key}" title="${key.charAt(0).toUpperCase() + key.slice(1)}" aria-label="${key} accent color">
+            <span style="background:${value.color}"></span>
+        </button>
+    `).join("");
+}
+
+function renderPersonalizationFields({ firstRun = false } = {}) {
+    const name = esc(state.profile.displayName);
+    const avatar = state.profile.personalization.avatar;
+    const background = state.profile.personalization.background;
+    return `
+        <div class="personalization-grid">
+            <section class="personalization-card personalization-avatar-card">
+                <div class="personalization-card-copy">
+                    <div class="eyebrow">PROFILE PICTURE</div>
+                    <h2>Make it yours</h2>
+                    <p>Use a picture or keep your initial. You can change it anytime.</p>
+                </div>
+                <div class="avatar-preview ${avatar ? "has-avatar" : ""}">${avatar ? `<img src="${esc(avatar)}" alt="Profile picture" draggable="false">` : esc(profileInitial(state.profile.displayName))}</div>
+                <div class="personalization-actions">
+                    <input id="profile-avatar-input" class="visually-hidden-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+                    <button class="btn" type="button" data-action="profile-pick-avatar">${avatar ? "Change picture" : "Upload picture"}</button>
+                    ${avatar ? `<button class="btn btn-quiet" type="button" data-action="profile-remove-avatar">Remove</button>` : `<button class="btn btn-quiet" type="button" data-action="profile-skip-avatar">Skip</button>`}
+                </div>
+            </section>
+
+            <section class="personalization-card personalization-name-card">
+                <div class="eyebrow">YOUR PROFILE</div>
+                <h2>What should we call you?</h2>
+                <label class="setup-field">
+                    <span>Display name</span>
+                    <input id="profile-name-input" type="text" maxlength="40" autocomplete="name" value="${name}" placeholder="Enter your name">
+                    <small>${firstRun ? "This is how you'll appear throughout WAYMARK." : "Stored locally on this computer."}</small>
+                </label>
+            </section>
+
+            <section class="personalization-card personalization-background-card">
+                <div class="personalization-card-copy">
+                    <div class="eyebrow">BACKGROUND</div>
+                    <h2>Set the atmosphere</h2>
+                    <p>Choose an image for a more personal WAYMARK. A dark overlay keeps the interface readable.</p>
+                </div>
+                <div class="background-preview ${background ? "has-background" : ""}">
+                    ${background ? `<img class="background-preview-image" src="${esc(background)}" alt="" aria-hidden="true" draggable="false">` : `<span>YOUR BACKGROUND</span>`}
+                </div>
+                <div class="personalization-actions">
+                    <input id="profile-background-input" class="visually-hidden-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+                    <button class="btn" type="button" data-action="profile-pick-background">${background ? "Change image" : "Upload background"}</button>
+                    ${background ? `<button class="btn btn-quiet" type="button" data-action="profile-remove-background">Remove</button>` : `<button class="btn btn-quiet" type="button" data-action="profile-skip-background">Skip</button>`}
+                </div>
+            </section>
+
+            <section class="personalization-card personalization-accent-card">
+                <div class="eyebrow">ACCENT COLOR</div>
+                <h2>Choose your style</h2>
+                <p>One controlled accent color is used across buttons, navigation, progress, and highlights.</p>
+                <div class="accent-choice-row" role="group" aria-label="Accent color">${accentChoices()}</div>
+                <div class="accent-preview"><span class="accent-preview-dot"></span><span>This is how your accent will look.</span></div>
+            </section>
+        </div>
+    `;
 }
 
 function renderProfileSetup() {
     document.body.classList.remove("waymark-setup-mode");
     view.innerHTML = `
-        <div class="view-inner">
-            <div class="screen-header">
+        <div class="view-inner personalization-view">
+            <div class="screen-header personalization-header">
                 <div class="eyebrow">PERSONALIZE WAYMARK</div>
-                <h1>What should WAYMARK call you?</h1>
-                <p>This name stays on this installation and is used for your WAYMARK profile. It does not change your MyAnimeList or Serializd accounts.</p>
+                <h1>Let's make it yours.</h1>
+                <p>Set up the look of your WAYMARK profile. Everything here is optional except your display name.</p>
             </div>
-            <div class="panel profile-panel">
-                <label class="setup-field">
-                    <span>Your display name</span>
-                    <input id="profile-name-input" type="text" maxlength="40" autocomplete="name" placeholder="Enter your name">
-                    <small>You can change this later from Settings.</small>
-                </label>
-                <div class="watch-actions">
-                    <button class="btn btn-primary" data-action="profile-save">Continue →</button>
-                </div>
-                <div id="profile-message" class="setup-message"></div>
+            ${renderPersonalizationFields({ firstRun: true })}
+            <div class="personalization-footer">
+                <span>Your profile picture, background, accent, and name are saved on this device.</span>
+                <button class="btn btn-primary" data-action="profile-save">Continue →</button>
             </div>
+            <div id="profile-message" class="setup-message"></div>
         </div>
     `;
-    const input = document.getElementById("profile-name-input");
-    input?.focus();
+    document.getElementById("profile-name-input")?.focus();
+    applyPersonalization();
 }
 
 function renderProfileSettings() {
-    const name = esc(state.profile.displayName);
     view.innerHTML = `
-        <div class="view-inner">
-            <div class="screen-header">
-                <div class="eyebrow">SETTINGS</div>
+        <div class="view-inner personalization-view">
+            <div class="screen-header personalization-header">
+                <div class="eyebrow">SETTINGS · PERSONALIZATION</div>
                 <h1>Your WAYMARK profile</h1>
-                <p>Change the name WAYMARK uses for this installation. Your service credentials remain separate.</p>
+                <p>Change your display name and visual identity. Your MAL and Serializd credentials remain separate.</p>
             </div>
-            <div class="panel profile-panel">
-                <label class="setup-field">
-                    <span>Display name</span>
-                    <input id="profile-name-input" type="text" maxlength="40" autocomplete="name" value="${name}" placeholder="Enter your name">
-                    <small>This is stored locally on this computer.</small>
-                </label>
-                <div class="watch-actions">
-                    <button class="btn btn-primary" data-action="profile-save">Save changes</button>
-                </div>
-                <div id="profile-message" class="setup-message"></div>
+            ${renderPersonalizationFields()}
+            <div class="personalization-footer">
+                <span>Changes are saved automatically on this device and apply immediately.</span>
+                <button class="btn btn-primary" data-action="profile-save">Save & apply →</button>
             </div>
+            <div id="profile-message" class="setup-message"></div>
         </div>
     `;
+    applyPersonalization();
 }
 
 async function saveProfile() {
@@ -245,8 +438,9 @@ async function saveProfile() {
         state.profile.displayName = String(result?.display_name || name).trim();
         state.profile.firstRun = false;
         state.profile.editing = false;
-        updateProfileChrome();
-        msg("Profile name saved.");
+        applyPersonalization();
+        const saved = await savePersonalization();
+        msg(saved ? "Profile and appearance saved." : "Profile saved, but appearance could not be saved.");
         if (state.route === "settings") {
             renderProfileSettings();
         } else {
@@ -259,6 +453,31 @@ async function saveProfile() {
         }
     }
 }
+
+async function readProfileImage(file, maxBytes, kind) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+        msg(`Choose an image file for your ${kind}.`);
+        return;
+    }
+    if (file.size > maxBytes) {
+        msg(`${kind === "profile picture" ? "Profile pictures" : "Background images"} must be ${Math.round(maxBytes / 1024 / 1024)} MB or smaller.`);
+        return;
+    }
+    const reader = new FileReader();
+    reader.onload = async () => {
+        if (kind === "profile picture") state.profile.personalization.avatar = String(reader.result || "");
+        else state.profile.personalization.background = String(reader.result || "");
+        applyPersonalization();
+        const saved = await savePersonalization();
+        if (state.profile.firstRun) renderProfileSetup();
+        else renderProfileSettings();
+        if (!saved) msg(`${kind === "profile picture" ? "Profile picture" : "Background image"} is active, but could not be saved permanently.`);
+    };
+    reader.onerror = () => msg(`Could not read that ${kind}.`);
+    reader.readAsDataURL(file);
+}
+
 
 function openProfileEditor() {
     state.profile.editing = true;
@@ -515,12 +734,61 @@ function homeFormatDate(value) {
 
 function homeContinueRows(library) {
     const mal = Array.isArray(library?.mal) ? library.mal : [];
-    return mal
-        .filter(item => {
-            const status = String(item?.status || "").toLowerCase();
-            return status === "watching" || status === "rewatching";
-        })
-        .slice(0, 5);
+    const serializd = Array.isArray(library?.serializd) ? library.serializd : [];
+    const malWatching = mal.filter(item => {
+        const status = String(item?.status || "").toLowerCase();
+        return status === "watching" || status === "rewatching";
+    });
+    const serializdWatching = serializd.filter(item => {
+        const status = String(item?.status || "").toLowerCase();
+        return status === "watching" || item?.currently_watching === true;
+    });
+
+    // Keep the existing MAL ordering first, then append Serializd's live
+    // currently-watching titles. Both sources are already loaded by the
+    // library call; switching Home slides never makes another network request.
+    return [...malWatching, ...serializdWatching].slice(0, 8);
+}
+
+function homeServiceKey(item) {
+    return String(item?.service || "MAL").toLowerCase() === "serializd" ? "serializd" : "mal";
+}
+
+function homeTitle(item, service) {
+    return service === "mal"
+        ? ((item?.node || item)?.title || item?.title || "Untitled")
+        : (item?.name || item?.title || "Untitled");
+}
+
+function homeProgressMeta(item, service) {
+    if (service === "mal") {
+        const watched = Number(item?.watched ?? 0);
+        const total = Number(item?.total ?? 0);
+        if (total > 0) {
+            return {
+                watched,
+                total,
+                progress: Math.min(100, Math.round((watched / total) * 100)),
+                label: `Episode ${watched} of ${total}`
+            };
+        }
+        return { watched, total: 0, progress: null, label: `${watched} episodes watched` };
+    }
+
+    const watchedSeasons = Number(item?.watched_seasons ?? 0);
+    const totalSeasons = Number(item?.total_seasons ?? item?.seasons ?? 0);
+    if (totalSeasons > 0 && (watchedSeasons > 0 || item?.completed === true)) {
+        return {
+            watched: watchedSeasons,
+            total: totalSeasons,
+            progress: Math.min(100, Math.round((watchedSeasons / totalSeasons) * 100)),
+            label: `Season ${watchedSeasons} of ${totalSeasons}`
+        };
+    }
+    if (totalSeasons > 0) {
+        return { watched: 0, total: totalSeasons, progress: null, label: `Currently watching · ${totalSeasons} season${totalSeasons === 1 ? "" : "s"}` };
+    }
+    return { watched: 0, total: 0, progress: null, label: "Currently watching" };
 }
 
 function homeContinueRow(item) {
@@ -552,6 +820,82 @@ function homeContinueRow(item) {
     `;
 }
 
+function mediaCardMarkup(item, service, options = {}) {
+    const serviceKey = service === "serializd" ? "serializd" : "mal";
+    const title = homeTitle(item, serviceKey);
+    const poster = catalogPoster(item, serviceKey);
+    const status = String(item?.status || "").replace(/_/g, " ");
+    const progressMeta = homeProgressMeta(item, serviceKey);
+    const progress = progressMeta.progress;
+    const subtitle = options.subtitle || progressMeta.label || status || (serviceKey === "mal" ? "MyAnimeList" : "Serializd");
+    const badge = options.badge || (status ? status : "");
+    const action = options.action || "";
+    const content = `
+        <div class="media-card-art${poster ? "" : " is-missing"}">
+            ${poster ? `<img src="${esc(poster)}" alt="${esc(title)} poster" loading="lazy" decoding="async" onerror="this.closest('.media-card-art')?.classList.add('is-missing'); this.remove();">` : ""}
+            <div class="media-card-art-fallback"><span>${esc(title.slice(0, 1).toUpperCase())}</span></div>
+            ${badge ? `<span class="media-card-badge">${esc(badge)}</span>` : ""}
+            ${action ? `<span class="media-card-play">▶</span>` : ""}
+        </div>
+        <div class="media-card-copy">
+            <strong>${esc(title)}</strong>
+            <span>${esc(subtitle)}</span>
+            ${progress != null ? `<div class="media-card-progress"><i style="width:${progress}%"></i></div>` : ""}
+        </div>
+    `;
+    return action
+        ? `<button class="media-card" data-action="${esc(action)}" data-title="${esc(title)}">${content}</button>`
+        : `<article class="media-card">${content}</article>`;
+}
+
+function homeFeaturedMarkup(items) {
+    if (!Array.isArray(items) || !items.length) return `
+        <section class="home-featured home-featured-empty">
+            <div class="home-featured-copy">
+                <div class="eyebrow">YOUR NEXT WATCH</div>
+                <h2>Start something worth remembering.</h2>
+                <p>Search for a title or log something you've watched to build your personal media journey.</p>
+                <div class="home-featured-actions">
+                    <button class="btn btn-primary" data-action="home-search">Find a title <span>→</span></button>
+                    <button class="btn" data-action="home-watch">Log something</button>
+                </div>
+            </div>
+        </section>
+    `;
+
+    const index = Math.max(0, Math.min(Number(state.home.featuredIndex || 0), items.length - 1));
+    const item = items[index];
+    const service = homeServiceKey(item);
+    const title = homeTitle(item, service);
+    const poster = catalogPoster(item, service);
+    const progressMeta = homeProgressMeta(item, service);
+    const status = String(item?.status || "watching").replace(/_/g, " ");
+
+    return `
+        <section class="home-featured" data-action="home-continue" data-title="${esc(title)}">
+            <div class="home-featured-backdrop" style="${poster ? `background-image: linear-gradient(90deg, rgba(8,6,12,.96) 0%, rgba(8,6,12,.72) 42%, rgba(8,6,12,.18) 100%), url('${esc(poster)}')` : ""}"></div>
+            <div class="home-featured-copy">
+                <div class="eyebrow">CONTINUE WATCHING · ${service === "mal" ? "MYANIMELIST" : "SERIALIZD"}</div>
+                <h2>${esc(title)}</h2>
+                <p>${esc(progressMeta.label)} · ${esc(status)}</p>
+                ${progressMeta.progress != null ? `<div class="home-featured-progress"><span style="width:${progressMeta.progress}%"></span></div>` : ""}
+                <div class="home-featured-actions">
+                    <button class="btn btn-primary" data-action="home-continue" data-title="${esc(title)}">Continue <span>→</span></button>
+                    <button class="btn" data-action="home-library">View library</button>
+                </div>
+            </div>
+            ${poster ? `<img class="home-featured-poster" src="${esc(poster)}" alt="${esc(title)} poster" loading="eager" decoding="async" onerror="this.remove();">` : ""}
+            ${items.length > 1 ? `
+                <button class="home-featured-nav home-featured-prev" data-action="home-featured-prev" aria-label="Previous continue watching title">‹</button>
+                <button class="home-featured-nav home-featured-next" data-action="home-featured-next" aria-label="Next continue watching title">›</button>
+                <div class="home-featured-dots" aria-label="Continue watching position">
+                    ${items.map((_, dotIndex) => `<button class="home-featured-dot ${dotIndex === index ? "is-active" : ""}" data-action="home-featured-go" data-index="${dotIndex}" aria-label="Show ${dotIndex + 1} of ${items.length}"></button>`).join("")}
+                </div>
+            ` : ""}
+        </section>
+    `;
+}
+
 function homeDashboardShell() {
     const history = state.home.history;
     const library = state.home.library;
@@ -563,24 +907,28 @@ function homeDashboardShell() {
     const mal = Array.isArray(library?.mal) ? library.mal : [];
     const serializd = Array.isArray(library?.serializd) ? library.serializd : [];
     const continueRows = homeContinueRows(library);
+    const featuredIndex = continueRows.length ? Math.min(Number(state.home.featuredIndex || 0), continueRows.length - 1) : 0;
+    state.home.featuredIndex = featuredIndex;
 
     const totalLibrary = mal.length + serializd.length;
-    const watchingCount = mal.filter(item => {
-        const status = String(item?.status || "").toLowerCase();
-        return status === "watching" || status === "rewatching";
-    }).length;
-    const completedCount = mal.filter(item =>
-        String(item?.status || "").toLowerCase() === "completed"
-    ).length;
+    const watchingCount =
+        mal.filter(item => {
+            const status = String(item?.status || "").toLowerCase();
+            return status === "watching" || status === "rewatching";
+        }).length +
+        serializd.filter(item => item?.currently_watching === true || String(item?.status || "").toLowerCase() === "watching").length;
+    const completedCount =
+        mal.filter(item => String(item?.status || "").toLowerCase() === "completed").length +
+        serializd.filter(item => item?.completed === true || String(item?.status || "").toLowerCase() === "completed").length;
     const ratedCount = entries.filter(entry => entry?.rating != null).length;
 
     return `
         <div class="view-inner home-dashboard">
-            <div class="home-hero">
+            <div class="home-hero home-hero-compact">
                 <div>
                     <div class="eyebrow">YOUR MEDIA COMMAND CENTER</div>
                     <h1>Welcome back${state.profile.displayName ? `, ${esc(state.profile.displayName)}` : ""}.</h1>
-                    <p>One place to log, review, rate, and keep track of everything across your connected media services.</p>
+                    <p>Track what you watch, pick up where you left off, and keep your media journey together.</p>
                 </div>
                 <div class="home-hero-actions">
                     <button class="btn btn-primary" data-action="home-watch">Log something <span>→</span></button>
@@ -588,121 +936,59 @@ function homeDashboardShell() {
                 </div>
             </div>
 
-            <div class="home-stat-grid">
-                <div class="home-stat-card">
-                    <span class="home-stat-label">IN YOUR LIBRARY</span>
-                    <strong>${totalLibrary || "—"}</strong>
-                    <small>${totalLibrary ? `${mal.length} MAL · ${serializd.length} Serializd` : "No library data loaded"}</small>
-                </div>
-                <div class="home-stat-card">
-                    <span class="home-stat-label">IN PROGRESS</span>
-                    <strong>${watchingCount || "—"}</strong>
-                    <small>${watchingCount ? "titles currently being watched" : "Nothing currently in progress"}</small>
-                </div>
-                <div class="home-stat-card">
-                    <span class="home-stat-label">COMPLETED</span>
-                    <strong>${completedCount || "—"}</strong>
-                    <small>${completedCount ? "completed MAL titles" : "No completed titles loaded"}</small>
-                </div>
+            ${homeFeaturedMarkup(continueRows)}
+
+            <div class="home-stat-strip">
+                <div><span>LIBRARY</span><strong>${totalLibrary || "—"}</strong><small>${mal.length} MAL · ${serializd.length} Serializd</small></div>
+                <div><span>IN PROGRESS</span><strong>${watchingCount || "—"}</strong><small>${watchingCount ? "currently watching" : "nothing in progress"}</small></div>
+                <div><span>COMPLETED</span><strong>${completedCount || "—"}</strong><small>${completedCount ? "completed across services" : "no completed titles loaded"}</small></div>
+                <div><span>RECENT RATINGS</span><strong>${ratedCount || "—"}</strong><small>from your timeline</small></div>
             </div>
 
-            <div class="home-content-grid">
-                <section class="home-panel home-activity-panel">
-                    <div class="home-panel-head">
-                        <div>
-                            <div class="eyebrow">CONTINUE WATCHING</div>
-                            <h2>Pick up where you left off</h2>
-                        </div>
-                        <button class="btn" data-action="home-library">Open library</button>
+            <section class="home-media-section">
+                <div class="home-section-head">
+                    <div>
+                        <div class="eyebrow">CONTINUE WATCHING</div>
+                        <h2>Pick up where you left off</h2>
                     </div>
-                    ${state.home.loading ? `
-                        <div class="home-loading">
-                            <div class="loading-dot"></div>
-                            <span>Loading your dashboard…</span>
-                        </div>
-                    ` : continueRows.length ? `
-                        <div class="home-continue-list">
-                            ${continueRows.map(homeContinueRow).join("")}
-                        </div>
-                    ` : `
-                        <div class="home-empty home-empty-short">
-                            <strong>No titles are currently in progress.</strong>
-                            <span>Start something through Watch and it will appear here.</span>
-                        </div>
-                    `}
+                    <button class="btn" data-action="home-library">Open library</button>
+                </div>
+                ${state.home.loading ? `
+                    <div class="home-loading"><div class="loading-dot"></div><span>Loading your dashboard…</span></div>
+                ` : continueRows.length ? `
+                    <div class="home-media-grid">
+                        ${continueRows.slice(0, 8).map(item => mediaCardMarkup(item, homeServiceKey(item), { action: "home-continue", subtitle: homeProgressMeta(item, homeServiceKey(item)).label })).join("")}
+                    </div>
+                ` : `
+                    <div class="home-empty home-empty-short"><strong>No titles are currently in progress.</strong><span>Start something through Watch and it will appear here.</span></div>
+                `}
+            </section>
+
+            <div class="home-lower-grid">
+                <section class="home-panel home-recent-panel">
+                    <div class="home-panel-head">
+                        <div><div class="eyebrow">RECENT ACTIVITY</div><h2>Latest from your timeline</h2></div>
+                        <button class="btn" data-action="home-history">View all</button>
+                    </div>
+                    ${entries.length ? `<div class="home-activity-list">${entries.slice(0, 5).map(homeActivityRow).join("")}</div>` : errors.length ? `<div class="home-inline-error"><span>${esc(errors[0])}</span><button class="btn" data-action="home-refresh">Retry</button></div>` : `<div class="home-empty"><strong>Your activity will appear here.</strong><span>Log something through Watch to start building your WAYMARK timeline.</span></div>`}
                 </section>
 
                 <section class="home-panel home-actions-panel">
                     <div class="eyebrow">QUICK ACTIONS</div>
                     <h2>Jump right in</h2>
-                    <div class="home-action-list">
-                        <button class="home-action-row" data-action="home-review">
-                            <span class="home-action-icon">✎</span>
-                            <span><strong>Write a review</strong><small>Capture what you thought.</small></span>
-                            <b>→</b>
-                        </button>
-                        <button class="home-action-row" data-action="home-rate">
-                            <span class="home-action-icon">★</span>
-                            <span><strong>Rate something</strong><small>Update a MAL or Serializd rating.</small></span>
-                            <b>→</b>
-                        </button>
-                        <button class="home-action-row" data-action="home-history">
-                            <span class="home-action-icon">◷</span>
-                            <span><strong>See recent history</strong><small>Review your latest activity.</small></span>
-                            <b>→</b>
-                        </button>
-                    </div>
-                </section>
-            </div>
-
-            <div class="home-secondary-grid">
-                <section class="home-panel home-recent-panel">
-                    <div class="home-panel-head">
-                        <div>
-                            <div class="eyebrow">RECENT ACTIVITY</div>
-                            <h2>Latest from your timeline</h2>
-                        </div>
-                        <button class="btn" data-action="home-history">View all</button>
-                    </div>
-                    ${entries.length ? `
-                        <div class="home-activity-list">
-                            ${entries.slice(0, 5).map(homeActivityRow).join("")}
-                        </div>
-                    ` : errors.length ? `
-                        <div class="home-inline-error">
-                            <span>${esc(errors[0])}</span>
-                            <button class="btn" data-action="home-refresh">Retry</button>
-                        </div>
-                    ` : `
-                        <div class="home-empty">
-                            <strong>Your activity will appear here.</strong>
-                            <span>Log something through Watch to start building your WAYMARK timeline.</span>
-                        </div>
-                    `}
-                </section>
-
-                <section class="home-panel home-stats-panel">
-                    <div class="eyebrow">YOUR STATS</div>
-                    <h2>At a glance</h2>
-                    <div class="home-stat-list">
-                        <div><span>Recent activity</span><strong>${entries.length || "—"}</strong></div>
-                        <div><span>Recent ratings</span><strong>${ratedCount || "—"}</strong></div>
-                        <div><span>Connected services</span><strong>2</strong></div>
-                        <div><span>Completed titles</span><strong>${completedCount || "—"}</strong></div>
+                    <div class="home-action-grid">
+                        <button class="home-action-tile" data-action="home-review"><span>✎</span><strong>Review</strong><small>Write something</small></button>
+                        <button class="home-action-tile" data-action="home-rate"><span>★</span><strong>Rate</strong><small>Score a title</small></button>
+                        <button class="home-action-tile" data-action="home-history"><span>◷</span><strong>History</strong><small>See your timeline</small></button>
+                        <button class="home-action-tile" data-action="home-library"><span>▣</span><strong>Library</strong><small>Browse everything</small></button>
                     </div>
                 </section>
             </div>
 
             <div class="home-footer-row">
-                <div>
-                    <div class="eyebrow">CONNECTED SERVICES</div>
-                    <h2>Your media stays connected.</h2>
-                </div>
-                <div class="home-service-list">
-                    <span class="home-service-pill"><i></i> MyAnimeList</span>
-                    <span class="home-service-pill"><i></i> Serializd</span>
-                </div>
-                <button class="btn" data-action="home-refresh">${state.home.loading ? "Refreshing…" : "Refresh dashboard"}</button>
+                <div><div class="eyebrow">YOUR WAYMARK</div><h2>Everything you watch, in one place.</h2></div>
+                <div class="home-service-list"><span class="home-service-pill"><i></i> MyAnimeList</span><span class="home-service-pill"><i></i> Serializd</span></div>
+                <button class="btn" data-action="home-refresh">${state.home.loading ? "Refreshing…" : "Refresh"}</button>
             </div>
         </div>
     `;
@@ -722,6 +1008,7 @@ async function loadHomeDashboard() {
         if (requestId !== state.home.requestId || state.route !== "home") return;
         state.home.history = historyData;
         state.home.library = libraryData;
+        state.home.featuredIndex = 0;
     } catch (error) {
         if (requestId !== state.home.requestId || state.route !== "home") return;
         state.home.history = state.home.history || { entries: [], errors: [] };
@@ -809,12 +1096,71 @@ function guidedTypeQuestion() {
 }
 
 function catalogPoster(item, service) {
-    if (!item) return "";
-    if (service === "mal") {
-        const node = item.node || item;
-        return node.image_url || node.main_picture?.large || node.main_picture?.medium || item.image_url || "";
+    if (!item || typeof item !== "object") return "";
+
+    const candidates = [];
+    const add = value => {
+        if (typeof value === "string" && value.trim()) candidates.push(value.trim());
+    };
+    const addPicture = picture => {
+        if (!picture || typeof picture !== "object") return;
+        add(picture.large);
+        add(picture.medium);
+        add(picture.small);
+        add(picture.url);
+    };
+    const addImages = images => {
+        if (!images || typeof images !== "object") return;
+        for (const key of ["large", "medium", "small", "original", "default"]) {
+            const value = images[key];
+            if (typeof value === "string") add(value);
+            else if (value && typeof value === "object") add(value.url);
+        }
+        add(images.url);
+    };
+
+    const sources = [
+        item,
+        item.node,
+        item.media,
+        item.data,
+        item.title_data
+    ].filter(value => value && typeof value === "object");
+
+    for (const source of sources) {
+        add(source.image_url);
+        add(source.image);
+        add(source.poster);
+        add(source.posterUrl);
+        add(source.poster_url);
+        add(source.imageUrl);
+        add(source.posterPath);
+        add(source.poster_path);
+        add(source.imagePath);
+        add(source.image_path);
+        add(source.cover);
+        add(source.cover_url);
+        add(source.coverUrl);
+        add(source.thumbnail);
+        add(source.thumb);
+        add(source.showImage);
+        add(source.show_image);
+        add(source.showPoster);
+        add(source.show_poster);
+        add(source.bannerImage);
+        add(source.banner_image);
+        add(source.showBannerImage);
+        add(source.show_banner_image);
+        add(source.artwork);
+        add(source.artworkUrl);
+        add(source.artwork_url);
+        addPicture(source.main_picture);
+        addImages(source.images);
     }
-    return item.image_url || item.image || item.poster || item.posterUrl || item.imageUrl || item.posterPath || item.poster_path || "";
+
+    // Preserve the service distinction for future sources while accepting the
+    // flattened and nested shapes returned by the current MAL/Serializd bridge.
+    return candidates[0] || "";
 }
 
 function catalogPosterMarkup(item, service, alt) {
@@ -1141,7 +1487,15 @@ async function selectResult(service, index) {
     }
 }
 
-async function library() {
+async function library(forceRefresh = false) {
+    // Home already loads the same read-only library payload. Reuse it when
+    // available so navigating Home -> Library does not make a second remote
+    // library request. A manual Refresh still goes through the backend.
+    if (!forceRefresh && state.home.library && !state.home.loading) {
+        renderLibrary(state.home.library);
+        return;
+    }
+
     view.innerHTML = `
         <div class="view-inner">
             <div class="screen-header">
@@ -1177,60 +1531,42 @@ async function library() {
     }
 }
 
-function libraryRow(service, item) {
-    if (service === "mal") {
-        const progress = item.total != null
-            ? `${item.watched ?? 0} / ${item.total}`
-            : `${item.watched ?? 0} watched`;
-
-        return `
-            <div class="library-row">
-                <div class="library-copy">
-                    <strong>${esc(item.title || "Untitled")}</strong>
-                    <small>MAL ID: ${esc(item.id ?? "—")}</small>
-                </div>
-                <div class="library-meta">
-                    ${item.status ? `<span>${esc(item.status)}</span>` : ""}
-                    <span>${esc(progress)}</span>
-                    ${item.score != null ? `<span>Score ${esc(item.score)}</span>` : ""}
-                </div>
-            </div>
-        `;
-    }
-
+function libraryCard(service, item) {
+    const serviceKey = service === "serializd" ? "serializd" : "mal";
+    const title = item?.title || "Untitled";
+    const poster = catalogPoster(item, serviceKey);
+    const status = String(item?.status || "").replace(/_/g, " ");
+    const progressMeta = homeProgressMeta(item, serviceKey);
+    const progress = progressMeta.progress;
+    const meta = serviceKey === "mal"
+        ? progressMeta.label
+        : (status === "watching" || status === "completed"
+            ? `${progressMeta.label} · ${status}`
+            : ([item?.seasons != null ? `${item.seasons} seasons` : "", item?.episodes != null ? `${item.episodes} episodes` : ""].filter(Boolean).join(" · ") || "Serializd"));
     return `
-        <div class="library-row">
-            <div class="library-copy">
-                <strong>${esc(item.title || "Untitled")}</strong>
-                <small>Serializd ID: ${esc(item.id ?? "—")}</small>
+        <article class="library-media-card">
+            <div class="library-media-art${poster ? "" : " is-missing"}">
+                ${poster ? `<img src="${esc(poster)}" alt="${esc(title)} poster" loading="lazy" decoding="async" onerror="this.closest('.library-media-art')?.classList.add('is-missing'); this.remove();">` : ""}
+                <div class="library-media-fallback"><span>${esc(title.slice(0, 1).toUpperCase())}</span></div>
+                ${status ? `<span class="library-media-badge">${esc(status)}</span>` : ""}
             </div>
-            <div class="library-meta">
-                ${item.seasons != null ? `<span>${esc(item.seasons)} seasons</span>` : ""}
-                ${item.episodes != null ? `<span>${esc(item.episodes)} episodes</span>` : ""}
-            </div>
-        </div>
+            <div class="library-media-copy"><strong>${esc(title)}</strong><span>${esc(meta)}</span>${progress != null ? `<div class="library-media-progress"><i style="width:${progress}%"></i></div>` : ""}</div>
+        </article>
     `;
 }
 
 function libraryPanel(service, items) {
     const isMal = service === "mal";
     const title = isMal ? "MyAnimeList" : "Serializd";
-    const rows = (items || []).map(item => libraryRow(service, item)).join("");
-
+    const cards = (items || []).map(item => libraryCard(service, item)).join("");
     return `
-        <div class="panel service-panel library-panel">
-            <div class="result-heading">
-                <div>
-                    <div class="eyebrow">${isMal ? "MYANIMELIST" : "SERIALIZD"}</div>
-                    <h2>${title}</h2>
-                </div>
+        <section class="library-service-section">
+            <div class="library-section-head">
+                <div><div class="eyebrow">${isMal ? "MYANIMELIST" : "SERIALIZD"}</div><h2>${title}</h2></div>
                 <span class="service-pill">${items?.length || 0} ${items?.length === 1 ? "title" : "titles"}</span>
             </div>
-            ${rows
-                ? `<div class="library-list">${rows}</div>`
-                : `<div class="empty-state compact">No titles found in this library.</div>`
-            }
-        </div>
+            ${cards ? `<div class="library-media-grid">${cards}</div>` : `<div class="empty-state compact">No titles found in this library.</div>`}
+        </section>
     `;
 }
 
@@ -1238,22 +1574,14 @@ function renderLibrary(data) {
     const mal = Array.isArray(data?.mal) ? data.mal : [];
     const serializd = Array.isArray(data?.serializd) ? data.serializd : [];
     const errors = Array.isArray(data?.errors) ? data.errors : [];
-
+    const total = mal.length + serializd.length;
     view.innerHTML = `
         <div class="view-inner library-view">
-            <div class="screen-header library-header">
-                <div>
-                    <div class="eyebrow">CONNECTED LIBRARIES</div>
-                    <h1>Your library</h1>
-                    <p>Read-only data from the services currently connected to WAYMARK.</p>
-                </div>
-                <button class="btn" data-action="library-retry">Refresh</button>
+            <div class="library-hero-header">
+                <div><div class="eyebrow">YOUR MEDIA COLLECTION</div><h1>Library</h1><p>${total ? `${total} titles across your connected services.` : "Your connected media, gathered in one place."}</p></div>
+                <div class="library-header-actions"><span class="library-total-badge">${total || "—"} titles</span><button class="btn" data-action="library-retry">Refresh</button></div>
             </div>
-            ${errors.length ? `
-                <div class="library-warnings">
-                    ${errors.map(error => `<div class="library-warning">${esc(error)}</div>`).join("")}
-                </div>
-            ` : ""}
+            ${errors.length ? `<div class="library-warnings">${errors.map(error => `<div class="library-warning">${esc(error)}</div>`).join("")}</div>` : ""}
             ${libraryPanel("mal", mal)}
             ${libraryPanel("serializd", serializd)}
         </div>
@@ -1476,6 +1804,8 @@ function resetWatch() {
         malEpisodes: [],
         status: "watching",
         serializdCompleted: false,
+        serializdCurrentlyWatching: null,
+        serializdWatchingChoice: null,
         serializdRewatch: null,
         confirmation: false
     };
@@ -1855,6 +2185,8 @@ async function loadWatchSeasons() {
     `;
     try {
         state.watch.seasons = await call("watch_seasons", { show_id: showId });
+        state.watch.serializdCurrentlyWatching = state.watch.seasons?.currently_watching === true;
+        state.watch.serializdWatchingChoice = null;
         renderWatchSeasons();
     } catch (error) {
         watchError(`Could not load seasons: ${error.message}`);
@@ -1886,12 +2218,59 @@ async function loadWatchEpisodes() {
     }
 }
 
+function updateWatchEpisodeSelectionUI() {
+    const eps = state.watch.episodes?.episodes || [];
+    const selected = new Set(state.watch.selectedEpisodes);
+    const allSelected = eps.length > 0 && selected.size === eps.length;
+
+    view.querySelectorAll('button[data-action="watch-toggle-episode"]').forEach(button => {
+        const number = Number(button.dataset.episodeNumber);
+        const isSelected = selected.has(number);
+        button.classList.toggle("watch-episode-selected", isSelected);
+        button.setAttribute("aria-pressed", String(isSelected));
+        const check = button.querySelector(".watch-episode-check");
+        if (check) check.textContent = isSelected ? "✓" : "";
+    });
+
+    const toolbarCount = view.querySelector("[data-watch-selection-count]");
+    if (toolbarCount) toolbarCount.textContent = `${selected.size} selected`;
+
+    const toolbarMeta = view.querySelector("[data-watch-selection-meta]");
+    if (toolbarMeta) {
+        toolbarMeta.textContent = `${allSelected ? "Whole season selected" : `${eps.length} numbered episodes available`}${state.watch.episodes?.watched_episode_numbers?.length ? ` · ${state.watch.episodes.watched_episode_numbers.length} already watched` : ""}`;
+    }
+
+    const selectAllButton = view.querySelector('[data-action="watch-select-all"]');
+    if (selectAllButton) selectAllButton.textContent = allSelected ? "All selected" : "Select all";
+
+    const footerCount = view.querySelector("[data-watch-footer-count]");
+    if (footerCount) footerCount.textContent = `${selected.size} episode${selected.size === 1 ? "" : "s"} selected`;
+
+    const hint = view.querySelector("[data-watch-complete-hint]");
+    if (hint) hint.remove();
+    if (allSelected) {
+        const footer = view.querySelector("[data-watch-footer-copy]");
+        if (footer) {
+            const node = document.createElement("span");
+            node.className = "watch-complete-hint";
+            node.dataset.watchCompleteHint = "true";
+            node.textContent = "✓ Entire numbered season selected — season will be marked complete.";
+            footer.appendChild(node);
+        }
+    }
+
+    const saveButton = view.querySelector('[data-action="watch-review-serializd"]');
+    if (saveButton) saveButton.disabled = selected.size === 0;
+}
+
 function toggleWatchEpisode(number) {
     const selected = new Set(state.watch.selectedEpisodes);
     if (selected.has(number)) selected.delete(number);
     else selected.add(number);
     state.watch.selectedEpisodes = Array.from(selected).sort((a, b) => a - b);
-    renderWatchEpisodes();
+    // Episode selection is a purely local state change. Update only the
+    // affected controls instead of rebuilding the entire Watch screen.
+    updateWatchEpisodeSelectionUI();
 }
 
 function renderWatchEpisodes() {
@@ -1921,8 +2300,8 @@ function renderWatchEpisodes() {
             <div class="panel watch-selection-panel">
                 <div class="watch-episode-toolbar">
                     <div>
-                        <strong>${selected.size} selected</strong>
-                        <small>${allSelected ? "Whole season selected" : `${eps.length} numbered episodes available`}${state.watch.episodes?.watched_episode_numbers?.length ? ` · ${state.watch.episodes.watched_episode_numbers.length} already watched` : ""}</small>
+                        <strong data-watch-selection-count>${selected.size} selected</strong>
+                        <small data-watch-selection-meta>${allSelected ? "Whole season selected" : `${eps.length} numbered episodes available`}${state.watch.episodes?.watched_episode_numbers?.length ? ` · ${state.watch.episodes.watched_episode_numbers.length} already watched` : ""}</small>
                     </div>
                     <div class="watch-actions">
                         <button class="btn" data-action="watch-select-all">${allSelected ? "All selected" : "Select all"}</button>
@@ -1944,9 +2323,9 @@ function renderWatchEpisodes() {
                 </div>
 
                 <div class="watch-selection-footer">
-                    <div>
-                        <strong>${selected.size} episode${selected.size === 1 ? "" : "s"} selected</strong>
-                        ${allSelected ? `<span class="watch-complete-hint">✓ Entire numbered season selected — season will be marked complete.</span>` : ""}
+                    <div data-watch-footer-copy>
+                        <strong data-watch-footer-count>${selected.size} episode${selected.size === 1 ? "" : "s"} selected</strong>
+                        ${allSelected ? `<span class="watch-complete-hint" data-watch-complete-hint>✓ Entire numbered season selected — season will be marked complete.</span>` : ""}
                     </div>
                     <div class="watch-actions">
                         <button class="btn btn-primary" data-action="watch-review-serializd" ${selected.size ? "" : "disabled"}>Save changes</button>
@@ -1991,6 +2370,33 @@ function renderWatchRewatchQuestion() {
     `;
 }
 
+function renderWatchCurrentlyWatchingQuestion() {
+    const season = state.watch.season;
+    const selected = state.watch.selectedEpisodes || [];
+    view.innerHTML = `
+        <div class="view-inner watch-view">
+            <div class="screen-header watch-screen-header">
+                <div class="eyebrow">WATCH · SERIALIZD STATUS</div>
+                <h1>Are you watching this show?</h1>
+                <p>You logged new episode${selected.length === 1 ? "" : "s"} for a show that is not currently in your Serializd watching list.</p>
+                ${watchNewButton()}
+            </div>
+            <div class="panel watch-rewatch-panel">
+                <div class="watch-rewatch-summary">
+                    <strong>${esc(state.watch.serializd?.name || state.watch.query)}</strong>
+                    ${season ? `<span>S${String(season.season_number).padStart(2, "0")} · ${esc(season.name)}</span>` : ""}
+                    <span>${selected.map(n => `E${n}`).join(", ")}</span>
+                </div>
+                <div class="watch-warning">Choosing <strong>Yes</strong> also marks the show as <strong>Currently Watching</strong> on Serializd. Choosing <strong>No</strong> only logs the selected episode${selected.length === 1 ? "" : "s"}.</div>
+                <div class="watch-actions">
+                    <button class="btn" data-action="watch-currently-no">No, just log it</button>
+                    <button class="btn btn-primary" data-action="watch-currently-yes">Yes, I'm watching</button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
 function renderWatchConfirmation() {
     const mode = state.watch.serviceMode;
     const selected = state.watch.selectedEpisodes || [];
@@ -2019,6 +2425,7 @@ function renderWatchConfirmation() {
                     ${mode !== "serializd" ? `<div><span>MAL episodes</span><strong>${malEpisodes.length ? malEpisodes.map(n => `E${n}`).join(", ") : "None"}</strong></div>` : ""}
                     ${mode !== "serializd" ? `<div><span>MAL status</span><strong>${esc(state.watch.status === "keep" ? "Keep current status" : state.watch.status)}</strong></div>` : ""}
                     ${mode !== "mal" ? `<div><span>Serializd log type</span><strong>${state.watch.serializdRewatch ? "Rewatch" : "New watch log"}</strong></div>` : ""}
+                    ${mode !== "mal" && !state.watch.serializdRewatch ? `<div><span>Serializd show status</span><strong>${state.watch.serializdCurrentlyWatching === true ? "Already currently watching" : state.watch.serializdWatchingChoice === true ? "Mark as currently watching" : "Leave current show status unchanged"}</strong></div>` : ""}
                     <div><span>Writes</span><strong>${mode === "both" ? "MAL + Serializd" : mode === "mal" ? "MAL" : "Serializd"}</strong></div>
                 </div>
                 <div class="watch-warning">This will perform a real write to the selected connected service(s). Continue only if the selections above are correct.</div>
@@ -2056,9 +2463,15 @@ async function executeWatchBatch() {
             season_total_episodes: seasonTotal,
             status: state.watch.status,
             serializd_rewatch: !!state.watch.serializdRewatch,
-            mal_total_episodes: malTotalEpisodes()
+            serializd_watching_choice: state.watch.serializdWatchingChoice
         });
-        if (result?.ok) saveWatchCheckpoint();
+        if (result?.show_completed) state.watch.serializdCompleted = true;
+        if (result?.ok || result?.partial) {
+            saveWatchCheckpoint();
+            state.home.library = null;
+            state.home.history = null;
+            state.home.featuredIndex = 0;
+        }
         renderWatchResult(result);
     } catch (error) {
         watchError(`Watch save failed: ${error.message}`);
@@ -2082,6 +2495,9 @@ function renderWatchResult(result) {
                 <div class="watch-result-list">
                     ${succeeded.map(op => `<div class="watch-result ok">✓ ${esc(op.name)}</div>`).join("")}
                     ${failed.map(op => `<div class="watch-result failed">✕ ${esc(op.name)} — ${esc(op.error)}</div>`).join("")}
+                    ${result?.season_completed ? `<div class="watch-result ok">✓ Serializd season completed</div>` : ""}
+                    ${result?.show_completed ? `<div class="watch-result ok">✓ Serializd show completed</div>` : ""}
+                    ${Array.isArray(result?.skipped_existing) && result.skipped_existing.length ? `<div class="watch-result">Already logged / skipped: ${result.skipped_existing.length}</div>` : ""}
                 </div>
                 <div class="watch-actions">
                     <button class="btn" data-action="watch-history">View history</button>
@@ -2101,7 +2517,7 @@ function resetRate() {
         serializd: null, service: null, malStatus: null, malRating: "",
         malProgress: 0, malTotal: 0, malOriginal: null, serializdTarget: null,
         seasons: null, season: null, episodes: null, serializdRating: "",
-        serializdProgressTarget: "", serializdProgressSelected: [], serializdProgressRewatch: false, serializdExisting: null, confirmation: false,
+        serializdProgressTarget: "", serializdProgressSelected: [], serializdProgressRewatch: false, serializdExisting: null, serializdRatingTouched: false, confirmation: false,
         loading: false, loadingKey: "", requestSeq: 0, pending: null
     };
 }
@@ -2257,20 +2673,36 @@ async function loadRateEpisodes() {
     }
 }
 function renderRateEpisodes() { const eps=state.rate.episodes?.episodes||[]; view.innerHTML=`<div class="view-inner watch-view"><div class="screen-header watch-screen-header"><div class="eyebrow">SERIALIZD · SELECT EPISODE</div><h1>${esc(state.rate.serializd?.name||state.rate.query)}</h1><p>S${String(state.rate.season.season_number).padStart(2,"0")} · Choose an episode.</p></div><div class="panel"><div class="watch-episode-grid">${eps.map(ep=>`<button type="button" class="watch-episode" data-action="rate-select-episode" data-episode-number="${ep.episode_number}"><strong>E${String(ep.episode_number).padStart(2,"0")}</strong><span>${esc(ep.title)}</span></button>`).join("")}</div></div></div>`; }
-function renderSerializdRatingEditor() { const r=state.rate; view.innerHTML=`<div class="view-inner review-view"><div class="screen-header"><div class="eyebrow">SERIALIZD · RATING</div><h1>${esc(r.serializd?.name||r.query)}</h1><p>${esc(r.serializdTarget)}</p><div class="watch-header-actions"><button class="btn" data-action="rate-sz-back">Back</button></div></div><div class="panel review-editor-panel"><div class="review-field"><label for="sz-rating">Rating</label><select id="sz-rating"><option value="">No rating</option>${Array.from({length:10},(_,i)=>i+1).map(n=>{const v=(n/2).toFixed(1);return `<option value="${v}" ${String(r.serializdRating)===v?"selected":""}>${v} / 5</option>`}).join("")}</select><small>Serializd rating uses 0.5-star increments.</small></div><div class="watch-warning">Rating-only mode writes no review text. Existing Review workflow remains unchanged.</div><div class="watch-actions"><button class="btn" data-action="rate-sz-back">Back</button><button class="btn btn-primary" data-action="rate-preview-sz">Review changes</button></div></div></div>`; }
+function renderSerializdRatingEditor() {
+    const r = state.rate;
+    view.innerHTML = `<div class="view-inner review-view"><div class="screen-header"><div class="eyebrow">SERIALIZD · RATING</div><h1>${esc(r.serializd?.name||r.query)}</h1><p>${esc(r.serializdTarget)}</p><div class="watch-header-actions"><button class="btn" data-action="rate-sz-back">Back</button></div></div><div class="panel review-editor-panel"><div class="review-field"><label for="sz-rating">Rating</label><select id="sz-rating"><option value="">No rating</option>${Array.from({length:10},(_,i)=>i+1).map(n=>{const v=(n/2).toFixed(1);return `<option value="${v}" ${String(r.serializdRating)===v?"selected":""}>${v} / 5</option>`}).join("")}</select><small data-rate-existing-status>${r.serializdExisting ? "Existing rating loaded." : "Checking existing rating in the background…"}</small></div><div class="watch-warning">Rating-only mode writes no review text. Existing Review workflow remains unchanged.</div><div class="watch-actions"><button class="btn" data-action="rate-sz-back">Back</button><button class="btn btn-primary" data-action="rate-preview-sz">Review changes</button></div></div></div>`;
+}
+
 async function loadRateExisting() {
     const r = state.rate;
-    const token = beginRateLoad("existing-rating", "Checking your existing Serializd rating…");
+    const token = ++state.rate.requestSeq;
+    state.rate.loading = true;
+    state.rate.loadingKey = "existing-rating";
+    const target = r.serializdTarget;
+    const showId = r.serializd?.id;
+    const seasonId = r.season?.season_id || null;
+    const episodeNumber = r.episode?.episode_number || null;
     try {
-        const data = await call("review_existing", {target:r.serializdTarget, show_id:r.serializd.id, season_id:r.season?.season_id||null, episode_number:r.episode?.episode_number||null});
+        const data = await call("review_existing", {target, show_id:showId, season_id:seasonId, episode_number:episodeNumber});
         if (!rateLoadCurrent(token)) return;
         r.serializdExisting = data?.matches?.[0] || null;
-        if (r.serializdExisting?.stars != null) r.serializdRating = String(r.serializdExisting.stars);
-        renderSerializdRatingEditor();
+        if (!r.serializdRatingTouched && r.serializdExisting?.stars != null) {
+            r.serializdRating = String(r.serializdExisting.stars);
+            const select = document.getElementById("sz-rating");
+            if (select) select.value = r.serializdRating;
+        }
+        const status = document.querySelector("[data-rate-existing-status]");
+        if (status) status.textContent = r.serializdExisting?.stars != null ? "Existing rating loaded." : "No existing rating found.";
     } catch(_) {
         if (!rateLoadCurrent(token)) return;
         r.serializdExisting = null;
-        renderSerializdRatingEditor();
+        const status = document.querySelector("[data-rate-existing-status]");
+        if (status) status.textContent = "Could not check existing rating; you can still enter a new one.";
     } finally {
         endRateLoad(token);
     }
@@ -2367,13 +2799,13 @@ async function executeRate() {
         let result;
         if(pending.service==="mal"){
             result=await call("mal_update",{mal_id:r.mal.node?.id||r.mal.id,rating:r.malRating?Number(r.malRating):null,progress:r.malProgress,status:r.malStatus,total_episodes:r.malTotal});
-            if (token === state.rate.requestSeq) renderRateResult(result,"MyAnimeList");
+            if (token === state.rate.requestSeq) { state.home.library = null; state.home.history = null; state.home.featuredIndex = 0; renderRateResult(result,"MyAnimeList"); }
         } else if(pending.kind==="rating"){
             result=await call("serializd_rate",{target:r.serializdTarget,show_id:r.serializd.id,season_id:r.season?.season_id||null,episode_number:r.episode?.episode_number||null,stars:r.serializdRating?Number(r.serializdRating):null,existing:r.serializdExisting});
-            if (token === state.rate.requestSeq) renderRateResult(result,"Serializd");
+            if (token === state.rate.requestSeq) { state.home.library = null; state.home.history = null; state.home.featuredIndex = 0; renderRateResult(result,"Serializd"); }
         } else {
             result=await call("serializd_progress",{show_id:r.serializd.id,season_id:r.season.season_id,season_number:r.season.season_number,selected_episode_numbers:r.serializdProgressSelected||[],watched_episode_numbers:r.episodes?.watched_episode_numbers||[],rewatch:!!r.serializdProgressRewatch,season_total_episodes:Number(r.episodes?.final_episode||0)||null});
-            if (token === state.rate.requestSeq) renderRateResult(result,"Serializd");
+            if (token === state.rate.requestSeq) { state.home.library = null; state.home.history = null; state.home.featuredIndex = 0; renderRateResult(result,"Serializd"); }
         }
     } catch(e){
         if (token === state.rate.requestSeq) renderRateResult({ok:false,error:e.message},pending.service==="mal"?"MyAnimeList":"Serializd");
@@ -2384,8 +2816,15 @@ async function executeRate() {
 function renderRateResult(result,service){
     const ok=!!result?.ok;
     const pending=state.rate.pending||{};
+    const r=state.rate;
     const progress=pending.kind==="progress" && service==="Serializd";
-    const details=progress && ok ? `<div class="watch-result-list"><div class="watch-result ok">✓ ${esc(service)}</div><div class="watch-result">Logged: ${Number(result.logged?.length||0)} episode${result.logged?.length===1?"":"s"}</div><div class="watch-result">Already logged / skipped: ${Number(result.skipped_existing?.length||0)}</div><div class="watch-result">Log type: ${result.rewatch?"Rewatch":"Normal watch"}</div>${result.season_completed?`<div class="watch-result ok">✓ Season marked complete</div>`:""}</div>` : `<div class="watch-result-list"><div class="watch-result ${ok?"ok":"failed"}">${ok?"✓":"✕"} ${esc(service)}</div></div>`;
+    const rating=pending.kind==="rating" && service==="Serializd";
+    const targetLabel = r.serializdTarget === "episode" ? "episode" : r.serializdTarget === "season" ? "season" : "series";
+    const details = progress && ok
+        ? `<div class="watch-result-list"><div class="watch-result ok">✓ ${esc(service)}</div><div class="watch-result">Logged: ${Number(result.logged?.length||0)} episode${result.logged?.length===1?"":"s"}</div><div class="watch-result">Already logged / skipped: ${Number(result.skipped_existing?.length||0)}</div><div class="watch-result">Log type: ${result.rewatch?"Rewatch":"Normal watch"}</div>${result.season_completed?`<div class="watch-result ok">✓ Season marked complete</div>`:""}</div>`
+        : rating && ok
+            ? `<div class="watch-result-list"><div class="watch-result ok">✓ ${esc(service)} rating saved</div><div class="watch-result ok">✓ ${esc(targetLabel.charAt(0).toUpperCase()+targetLabel.slice(1))} marked as watched</div></div>`
+            : `<div class="watch-result-list"><div class="watch-result ${ok?"ok":"failed"}">${ok?"✓":"✕"} ${esc(service)}</div></div>`;
     view.innerHTML=`<div class="view-inner watch-view"><div class="screen-header watch-screen-header"><div class="eyebrow">RATE + UPDATE · RESULT</div><h1>${ok?`${service} updated`: `${service} update failed`}</h1><p>${ok?"The requested change was accepted.":esc(result?.error||"Update failed.")}</p></div><div class="panel">${details}<div class="watch-actions">${ok&&service==="MyAnimeList"&&state.rate.mediaType==="tv"?`<button class="btn btn-primary" data-action="rate-continue-serializd">Continue to Serializd</button>`:`<button class="btn btn-primary" data-action="rate-start-over">Done</button>`}</div></div></div>`;
 }
 
@@ -2633,7 +3072,7 @@ function renderReviewConfirmation() {
         <div class="view-inner review-view"><div class="screen-header"><div class="eyebrow">REVIEW · CONFIRM</div><h1>${r.editing ? "Ready to update?" : "Ready to save?"}</h1><p>Nothing has been written yet. Review the exact changes below.</p></div>
         <div class="panel review-confirm-panel"><div class="watch-summary">
             <div><span>Show</span><strong>${esc(reviewTitle())}</strong></div><div><span>Target</span><strong>${esc(reviewTargetLabel())}</strong></div><div><span>Rating</span><strong>${r.stars ? `${esc(r.stars)} / 5` : "No rating"}</strong></div><div><span>Rewatch</span><strong>${r.isRewatch ? "Yes" : "No"}</strong></div><div><span>Review</span><strong class="review-confirm-text">${r.text ? esc(r.text) : "No review text"}</strong></div>
-        </div><div class="watch-warning">This will perform a real ${r.editing ? "update" : "write"} to Serializd.</div><div class="watch-actions"><button class="btn" data-action="review-back-confirm">Back</button><button class="btn btn-primary" data-action="review-confirm">${r.editing ? "YES — Update review" : "YES — Save review"}</button></div></div></div>
+        </div><div class="watch-warning">This will perform a real ${r.editing ? "update" : "write"} to Serializd. Because you are reviewing this ${r.target === "episode" ? "episode" : r.target === "season" ? "season" : "series"}, WAYMARK will also mark it as watched.</div><div class="watch-actions"><button class="btn" data-action="review-back-confirm">Back</button><button class="btn btn-primary" data-action="review-confirm">${r.editing ? "YES — Update review" : "YES — Save review"}</button></div></div></div>
     `;
 }
 
@@ -2658,7 +3097,18 @@ async function executeReview() {
 
 function renderReviewResult(result) {
     const ok = !!result?.ok;
-    view.innerHTML = `<div class="view-inner review-view"><div class="screen-header"><div class="eyebrow">REVIEW · RESULT</div><h1>${ok ? (state.review.editing ? "Review updated" : "Review saved") : "Review not saved"}</h1><p>${ok ? "Serializd accepted the requested change." : esc(result?.error || "Review write failed.")}</p></div><div class="panel"><div class="watch-result-list"><div class="watch-result ${ok ? "ok" : "failed"}">${ok ? "✓" : "✕"} ${esc(reviewTargetLabel())}</div></div><div class="watch-actions"><button class="btn" data-action="review-find-existing">View existing reviews</button><button class="btn btn-primary" data-action="review-start-over">Review another</button></div></div></div>`;
+    const watched = ok && result?.watched === true;
+    const partial = !ok && result?.review_saved === true;
+    const targetWord = state.review.target === "episode" ? "episode" : state.review.target === "season" ? "season" : "series";
+    const headline = ok
+        ? (state.review.editing ? "Review updated" : "Review saved")
+        : (partial ? "Review saved, watch state failed" : "Review not saved");
+    const message = ok
+        ? `Serializd accepted the review and WAYMARK marked the ${result?.watched_operation || targetWord} as watched.`
+        : (partial
+            ? `The review was saved, but WAYMARK could not mark the ${targetWord} as watched: ${result?.error || "unknown error"}`
+            : (result?.error || "Review write failed."));
+    view.innerHTML = `<div class="view-inner review-view"><div class="screen-header"><div class="eyebrow">REVIEW · RESULT</div><h1>${esc(headline)}</h1><p>${esc(message)}</p></div><div class="panel"><div class="watch-result-list"><div class="watch-result ${ok ? "ok" : "failed"}">${ok ? "✓" : "✕"} ${esc(reviewTargetLabel())}</div>${watched ? `<div class="watch-result ok">✓ Marked as watched</div>` : ""}</div><div class="watch-actions"><button class="btn" data-action="review-find-existing">View existing reviews</button><button class="btn btn-primary" data-action="review-start-over">Review another</button></div></div></div>`;
 }
 
 function reviewRenderCurrent() {
@@ -2778,6 +3228,44 @@ document.addEventListener("click", async event => {
         await saveProfile();
         return;
     }
+    if (action === "profile-pick-avatar") {
+        document.getElementById("profile-avatar-input")?.click();
+        return;
+    }
+    if (action === "profile-remove-avatar" || action === "profile-skip-avatar") {
+        state.profile.personalization.avatar = null;
+        applyPersonalization();
+        const saved = await savePersonalization();
+        if (state.profile.firstRun) renderProfileSetup();
+        else renderProfileSettings();
+        if (!saved) msg("Profile picture removed for this session, but could not be saved.");
+        return;
+    }
+    if (action === "profile-pick-background") {
+        document.getElementById("profile-background-input")?.click();
+        return;
+    }
+    if (action === "profile-remove-background" || action === "profile-skip-background") {
+        state.profile.personalization.background = null;
+        applyPersonalization();
+        const saved = await savePersonalization();
+        if (state.profile.firstRun) renderProfileSetup();
+        else renderProfileSettings();
+        if (!saved) msg("Background removed for this session, but could not be saved.");
+        return;
+    }
+    if (action === "profile-accent") {
+        const accent = button.dataset.accent;
+        if (PERSONALIZATION_ACCENTS[accent]) {
+            state.profile.personalization.accent = accent;
+            applyPersonalization();
+            const saved = await savePersonalization();
+            if (state.profile.firstRun) renderProfileSetup();
+            else renderProfileSettings();
+            if (!saved) msg("Accent changed for this session, but could not be saved.");
+        }
+        return;
+    }
 
     // Serializd is remote and can take a few seconds. Once a Rating/Progress
     // navigation request starts, ignore additional remote navigation clicks
@@ -2788,6 +3276,19 @@ document.addEventListener("click", async event => {
         "rate-confirm"
     ]);
     if (state.rate.loading && rateRemoteActions.has(action)) return;
+
+    if (action === "home-featured-prev" || action === "home-featured-next" || action === "home-featured-go") {
+        const rows = homeContinueRows(state.home.library);
+        if (rows.length <= 1) return;
+        if (action === "home-featured-go") {
+            state.home.featuredIndex = Math.max(0, Math.min(Number(button.dataset.index || 0), rows.length - 1));
+        } else {
+            const delta = action === "home-featured-next" ? 1 : -1;
+            state.home.featuredIndex = (Number(state.home.featuredIndex || 0) + delta + rows.length) % rows.length;
+        }
+        view.innerHTML = homeDashboardShell();
+        return;
+    }
 
     if (action === "home-watch") {
         resetWatch();
@@ -2833,6 +3334,8 @@ document.addEventListener("click", async event => {
 
     if (action === "home-refresh") {
         state.home.history = null;
+        state.home.library = null;
+        state.home.featuredIndex = 0;
         state.home.loading = false;
         if (state.route !== "home") {
             setRoute("home");
@@ -2861,7 +3364,8 @@ document.addEventListener("click", async event => {
     }
 
     if (action === "library-retry") {
-        await library();
+        state.home.library = null;
+        await library(true);
         return;
     }
 
@@ -2890,12 +3394,12 @@ document.addEventListener("click", async event => {
     if (action === "rate-confirm") { await executeRate(); return; }
     if (action === "rate-continue-serializd") { state.rate.service=null; state.rate.confirmation=false; state.rate.pending=null; state.rate.serializd=null; renderSerializdCatalogOnly(); return; }
     if (action === "rate-sz-rating") { state.rate.serializdTarget="rating_choice"; renderSerializdRatingTargetChoice(); return; }
-    if (action === "rate-sz-series") { state.rate.serializdTarget="series"; state.rate.season=null; state.rate.episode=null; state.rate.episodes=null; await loadRateExisting(); renderSerializdRatingEditor(); return; }
+    if (action === "rate-sz-series") { state.rate.serializdTarget="series"; state.rate.season=null; state.rate.episode=null; state.rate.episodes=null; state.rate.serializdRating=""; state.rate.serializdExisting=null; state.rate.serializdRatingTouched=false; renderSerializdRatingEditor(); loadRateExisting(); return; }
     if (action === "rate-sz-season" || action === "rate-sz-episode") { state.rate.serializdTarget=action === "rate-sz-season" ? "season" : "episode"; state.rate.seasons=null; state.rate.season=null; state.rate.episode=null; state.rate.episodes=null; await loadRateSeasons(); return; }
     if (action === "rate-sz-progress") { state.rate.serializdTarget="progress"; state.rate.seasons=null; state.rate.season=null; state.rate.episodes=null; await loadRateSeasons(); return; }
-    if (action === "rate-select-season") { state.rate.season={season_id:Number(button.dataset.seasonId),season_number:Number(button.dataset.seasonNumber),name:button.querySelector(".watch-choice-copy strong")?.textContent||`Season ${button.dataset.seasonNumber}`}; if(state.rate.serializdTarget==="progress" || state.rate.serializdTarget==="episode") { if(state.rate.serializdTarget==="progress") { state.rate.serializdProgressSelected=[]; state.rate.serializdProgressRewatch=false; } await loadRateEpisodes(); } else { await loadRateExisting(); renderSerializdRatingEditor(); } return; }
+    if (action === "rate-select-season") { state.rate.season={season_id:Number(button.dataset.seasonId),season_number:Number(button.dataset.seasonNumber),name:button.querySelector(".watch-choice-copy strong")?.textContent||`Season ${button.dataset.seasonNumber}`}; if(state.rate.serializdTarget==="progress" || state.rate.serializdTarget==="episode") { if(state.rate.serializdTarget==="progress") { state.rate.serializdProgressSelected=[]; state.rate.serializdProgressRewatch=false; } await loadRateEpisodes(); } else { state.rate.serializdRating=""; state.rate.serializdExisting=null; state.rate.serializdRatingTouched=false; renderSerializdRatingEditor(); loadRateExisting(); } return; }
     if (action === "rate-select-episode") { const n=Number(button.dataset.episodeNumber); state.rate.episode=(state.rate.episodes?.episodes||[]).find(e=>Number(e.episode_number)===n)||null;
-        if (!state.rate.episode) { msg("That Serializd episode could not be resolved."); return; } state.rate.serializdTarget="episode"; await loadRateExisting(); renderSerializdRatingEditor(); return; }
+        if (!state.rate.episode) { msg("That Serializd episode could not be resolved."); return; } state.rate.serializdTarget="episode"; state.rate.serializdRating=""; state.rate.serializdExisting=null; state.rate.serializdRatingTouched=false; renderSerializdRatingEditor(); loadRateExisting(); return; }
     if (action === "rate-progress-toggle-episode") {
         event.preventDefault();
         event.stopPropagation();
@@ -2910,7 +3414,7 @@ document.addEventListener("click", async event => {
     }
     if (action === "rate-progress-select-all") { state.rate.serializdProgressSelected=(state.rate.episodes?.episodes||[]).map(e=>Number(e.episode_number)).filter(n=>n>0); renderSerializdProgressEditor(); return; }
     if (action === "rate-progress-clear-all") { state.rate.serializdProgressSelected=[]; renderSerializdProgressEditor(); return; }
-    if (action === "rate-sz-back") { if(state.rate.serializdTarget==="progress" && state.rate.episodes) { state.rate.serializdProgressSelected=[]; state.rate.serializdProgressRewatch=false; state.rate.episodes=null; state.rate.season=null; state.rate.seasons=null; loadRateSeasons(); } else if((state.rate.serializdTarget==="season"||state.rate.serializdTarget==="episode") && !state.rate.season) { state.rate.serializdTarget="rating_choice"; renderSerializdRatingTargetChoice(); } else if(state.rate.serializdTarget==="season"||state.rate.serializdTarget==="episode"){state.rate.season=null;state.rate.episode=null;state.rate.episodes=null;loadRateSeasons();} else if(state.rate.serializdTarget==="series"){state.rate.serializdTarget="rating_choice";renderSerializdRatingTargetChoice();} else if(state.rate.serializdTarget==="rating_choice"){state.rate.serializdTarget=null;renderSerializdUpdateChoice();} else {state.rate.serializdTarget=null;renderSerializdUpdateChoice();} return; }
+    if (action === "rate-sz-back") { state.rate.requestSeq++; if(state.rate.serializdTarget==="progress" && state.rate.episodes) { state.rate.serializdProgressSelected=[]; state.rate.serializdProgressRewatch=false; state.rate.episodes=null; state.rate.season=null; state.rate.seasons=null; loadRateSeasons(); } else if((state.rate.serializdTarget==="season"||state.rate.serializdTarget==="episode") && !state.rate.season) { state.rate.serializdTarget="rating_choice"; renderSerializdRatingTargetChoice(); } else if(state.rate.serializdTarget==="season"||state.rate.serializdTarget==="episode"){state.rate.season=null;state.rate.episode=null;state.rate.episodes=null;loadRateSeasons();} else if(state.rate.serializdTarget==="series"){state.rate.serializdTarget="rating_choice";renderSerializdRatingTargetChoice();} else if(state.rate.serializdTarget==="rating_choice"){state.rate.serializdTarget=null;renderSerializdUpdateChoice();} else {state.rate.serializdTarget=null;renderSerializdUpdateChoice();} return; }
     if (action === "rate-preview-sz") { state.rate.serializdRating=document.getElementById("sz-rating")?.value||""; if(!state.rate.serializdRating){msg("Choose a Serializd rating first.");return;} state.rate.pending={service:"serializd",kind:"rating"}; state.rate.confirmation=true; renderRateConfirmation(); return; }
     if (action === "rate-preview-sz-progress") { state.rate.serializdProgressSelected=(state.rate.serializdProgressSelected||[]).map(Number).filter(n=>Number.isInteger(n)&&n>0).sort((a,b)=>a-b); if(!state.rate.serializdProgressSelected.length){msg("Select at least one episode first.");return;} renderSerializdProgressRewatchQuestion(); return; }
     if (action === "rate-progress-rewatch-back") { renderSerializdProgressEditor(); return; }
@@ -3039,6 +3543,7 @@ document.addEventListener("click", async event => {
     }
 
     if (action === "watch-back-results") {
+        ++watchSerializdSelectionGeneration;
         state.watch.serviceMode = null;
         state.watch.seasons = null;
         state.watch.season = null;
@@ -3145,19 +3650,13 @@ document.addEventListener("click", async event => {
                 list_status: selected?.list_status || item?.list_status || null
             };
 
-            // Search results do not reliably carry the user's current MAL
-            // list progress. If the selected result did not include it,
-            // read the authoritative MyAnimeList list-status endpoint once.
-            let current = Number(state.watch.mal.list_status?.num_episodes_watched);
-            if (!Number.isFinite(current) || current < 0) {
-                const malId = Number(item.node?.id || item.id || selected?.node?.id || 0);
-                if (malId > 0) {
-                    const liveStatus = await call("mal_status", { mal_id: malId });
-                    const liveListStatus = liveStatus?.my_list_status || {};
-                    state.watch.mal.list_status = liveListStatus;
-                    current = Number(liveListStatus.num_episodes_watched || 0);
-                }
-            }
+            // The selected-result detail request now includes MAL's
+            // user-specific my_list_status field, so current progress is
+            // available without a second network round-trip. If MAL has no
+            // list entry for this anime, the missing status is treated as a
+            // new entry with zero watched episodes.
+            const listStatus = state.watch.mal.list_status;
+            const current = Number(listStatus?.num_episodes_watched);
             state.watch.mal.currentProgress = Number.isFinite(current) && current >= 0 ? current : 0;
         } catch (error) {
             msg(`Could not load MAL details: ${error.message}`);
@@ -3178,18 +3677,48 @@ document.addEventListener("click", async event => {
     if (action === "watch-select-serializd") {
         const item = state.watch.catalog?.serializd?.results?.[Number(button.dataset.index) - 1];
         if (!item) return;
+
+        // Selection itself is a local UI action and must not wait for the
+        // remote Serializd show-state request. The old flow awaited
+        // watch_seasons() here, so a 1–2 second Serializd response time was
+        // directly visible as a delay before the checkmark appeared.
+        // A monotonically increasing generation prevents a slower response
+        // from an earlier title click from overwriting a newer selection.
+        const selectionGeneration = ++watchSerializdSelectionGeneration;
         state.watch.serializd = item;
+        state.watch.seasons = null;
         state.watch.serializdCompleted = false;
+        state.watch.serializdCurrentlyWatching = null;
+        state.watch.serializdWatchingChoice = null;
         state.watch.serializdRewatch = null;
+
+        // Render immediately so the selected state/checkmark is synchronous
+        // from the user's perspective. The authoritative account state is
+        // loaded in the background and applied only if this is still the
+        // active Serializd selection.
+        renderWatchResults();
+
         try {
             const progress = await call("watch_seasons", { show_id: item.id });
+            if (selectionGeneration !== watchSerializdSelectionGeneration) return;
+            if (String(state.watch.serializd?.id) !== String(item.id)) return;
             state.watch.seasons = progress;
             state.watch.serializdCompleted = !!progress?.show_completed;
+            state.watch.serializdCurrentlyWatching = progress?.currently_watching === true;
+            // Do not re-render the results screen here. The selection was
+            // already rendered synchronously above; re-rendering after the
+            // background request completes causes the visible second flicker
+            // reported in the Watch title picker. The fetched state is kept
+            // in memory for Use Serializd / Use Both and later Watch steps.
         } catch (error) {
+            if (selectionGeneration !== watchSerializdSelectionGeneration) return;
+            if (String(state.watch.serializd?.id) !== String(item.id)) return;
             state.watch.seasons = null;
             msg(`Could not read Serializd watch status: ${error.message}`);
+            // Keep the selected result on screen. The error message is enough
+            // feedback; rebuilding the results view would create another
+            // unnecessary visual transition.
         }
-        renderWatchResults();
         return;
     }
 
@@ -3208,8 +3737,13 @@ document.addEventListener("click", async event => {
         state.watch.episodes = null;
         state.watch.selectedEpisodes = [];
         state.watch.serializdRewatch = null;
+        state.watch.serializdWatchingChoice = null;
         if (!state.watch.seasons) await loadWatchSeasons();
-        else renderWatchSeasons();
+        else {
+            state.watch.serializdCurrentlyWatching = state.watch.seasons?.currently_watching === true;
+            state.watch.serializdWatchingChoice = null;
+            renderWatchSeasons();
+        }
         return;
     }
 
@@ -3217,10 +3751,10 @@ document.addEventListener("click", async event => {
         if (!state.watch.mal || !state.watch.serializd) return;
         state.watch.serviceMode = "both";
         state.watch.malEpisodes = [];
-        state.watch.seasons = null;
-        state.watch.season = null;
-        state.watch.episodes = null;
-        state.watch.selectedEpisodes = [];
+        // Keep the Serializd season payload that was already loaded when the
+        // user selected the Serializd title. Use Both is a local workflow
+        // transition; throwing this data away forces the same show to be
+        // fetched again after the MAL step.
         state.watch.confirmation = false;
         renderMalPicker();
         return;
@@ -3258,11 +3792,19 @@ document.addEventListener("click", async event => {
         state.watch.confirmation = false;
 
         if (state.watch.serviceMode === "both") {
-            state.watch.seasons = null;
+            // The Serializd show/seasons were already loaded while selecting
+            // the title. Reuse that payload instead of issuing another
+            // watch_seasons request just because the MAL step completed.
             state.watch.season = null;
             state.watch.episodes = null;
             state.watch.selectedEpisodes = [];
-            await loadWatchSeasons();
+            if (state.watch.seasons) {
+                state.watch.serializdCurrentlyWatching = state.watch.seasons?.currently_watching === true;
+                state.watch.serializdWatchingChoice = null;
+                renderWatchSeasons();
+            } else {
+                await loadWatchSeasons();
+            }
         } else {
             renderWatchConfirmation();
         }
@@ -3300,13 +3842,13 @@ document.addEventListener("click", async event => {
     if (action === "watch-select-all") {
         const eps = state.watch.episodes?.episodes || [];
         state.watch.selectedEpisodes = eps.map(ep => ep.episode_number);
-        renderWatchEpisodes();
+        updateWatchEpisodeSelectionUI();
         return;
     }
 
     if (action === "watch-clear-all") {
         state.watch.selectedEpisodes = [];
-        renderWatchEpisodes();
+        updateWatchEpisodeSelectionUI();
         return;
     }
 
@@ -3332,6 +3874,17 @@ document.addEventListener("click", async event => {
 
         if (allSelectedAlreadyWatched && state.watch.serializdRewatch === null) {
             renderWatchRewatchQuestion();
+        } else if (
+            state.watch.serializdWatchingChoice === null
+            && state.watch.serializdRewatch !== true
+            && state.watch.serializdCurrentlyWatching !== true
+        ) {
+            // A normal watch must explicitly decide the show-level status.
+            // This also matters after the user answers "No, new watch" on
+            // the rewatch question: a completed show is now being started
+            // again, so it still needs the Currently Watching decision.
+            // The backend performs a fresh live-state check before writing.
+            renderWatchCurrentlyWatchingQuestion();
         } else {
             renderWatchConfirmation();
         }
@@ -3340,12 +3893,29 @@ document.addEventListener("click", async event => {
 
     if (action === "watch-rewatch-yes" || action === "watch-rewatch-no") {
         state.watch.serializdRewatch = action === "watch-rewatch-yes";
+        if (!state.watch.serializdRewatch) {
+            if (state.watch.serializdCurrentlyWatching === true) {
+                state.watch.serializdWatchingChoice = null;
+                renderWatchConfirmation();
+            } else {
+                state.watch.serializdWatchingChoice = null;
+                renderWatchCurrentlyWatchingQuestion();
+            }
+        } else {
+            renderWatchConfirmation();
+        }
+        return;
+    }
+
+    if (action === "watch-currently-yes" || action === "watch-currently-no") {
+        state.watch.serializdWatchingChoice = action === "watch-currently-yes";
         renderWatchConfirmation();
         return;
     }
 
     if (action === "watch-back-rewatch") {
         state.watch.serializdRewatch = null;
+        state.watch.serializdWatchingChoice = null;
         renderWatchEpisodes();
         return;
     }
@@ -3443,7 +4013,46 @@ document.addEventListener("click", async event => {
     }
 });
 
+document.addEventListener("change", event => {
+    if (event.target.id === "sz-rating") {
+        state.rate.serializdRatingTouched = true;
+        state.rate.serializdRating = event.target.value || "";
+    } else if (event.target.id === "profile-avatar-input") {
+        readProfileImage(event.target.files?.[0], 5 * 1024 * 1024, "profile picture");
+    } else if (event.target.id === "profile-background-input") {
+        readProfileImage(event.target.files?.[0], 10 * 1024 * 1024, "background image");
+    }
+});
+
+let homeFeaturedTouchStartX = null;
+document.addEventListener("touchstart", event => {
+    if (!event.target.closest(".home-featured")) return;
+    homeFeaturedTouchStartX = event.changedTouches?.[0]?.clientX ?? null;
+}, { passive: true });
+
+document.addEventListener("touchend", event => {
+    if (homeFeaturedTouchStartX == null) return;
+    const hero = event.target.closest(".home-featured");
+    const endX = event.changedTouches?.[0]?.clientX ?? null;
+    const rows = homeContinueRows(state.home.library);
+    const delta = endX == null ? 0 : endX - homeFeaturedTouchStartX;
+    homeFeaturedTouchStartX = null;
+    if (!hero || rows.length <= 1 || Math.abs(delta) < 45) return;
+    state.home.featuredIndex = (Number(state.home.featuredIndex || 0) + (delta < 0 ? 1 : -1) + rows.length) % rows.length;
+    view.innerHTML = homeDashboardShell();
+}, { passive: true });
+
 document.addEventListener("keydown", event => {
+    if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && document.querySelector(".home-featured")) {
+        const rows = homeContinueRows(state.home.library);
+        if (rows.length > 1 && !["INPUT", "TEXTAREA", "SELECT"].includes(event.target?.tagName)) {
+            const delta = event.key === "ArrowRight" ? 1 : -1;
+            state.home.featuredIndex = (Number(state.home.featuredIndex || 0) + delta + rows.length) % rows.length;
+            view.innerHTML = homeDashboardShell();
+            event.preventDefault();
+            return;
+        }
+    }
     if (event.key !== "Enter") return;
     if (event.target.id === "q") {
         startSearch();

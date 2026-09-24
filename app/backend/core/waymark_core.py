@@ -62,6 +62,8 @@ from app.backend.services.serializd import (
     get_full_diary,
     search_catalog,
     get_watched_library,
+    get_currently_watching,
+    get_username,
     get_watched_episode_logs,
     mark_episode_watched,
     update_review_log,
@@ -5762,6 +5764,14 @@ def _m19_mal_library_rows():
         watched = status.get("num_episodes_watched", 0)
         total = node.get("num_episodes")
 
+        main_picture = node.get("main_picture") if isinstance(node.get("main_picture"), dict) else {}
+        image_url = (
+            main_picture.get("large")
+            or main_picture.get("medium")
+            or main_picture.get("small")
+            or main_picture.get("url")
+        )
+
         rows.append({
             "service": "MAL",
             "id": mal_id,
@@ -5770,38 +5780,207 @@ def _m19_mal_library_rows():
             "watched": watched,
             "total": total,
             "score": status.get("score"),
+            "image_url": image_url,
+            "main_picture": main_picture or None,
         })
 
     return rows
+
+
+def _m19_serializd_image_url(item):
+    """Read Serializd artwork already present in the watched-library payload.
+
+    This function is deliberately network-free. Library artwork must never call
+    get_show() for every row because that turns one library read into an N+1
+    request storm. The Serializd service layer normalizes artwork into
+    ``image_url`` before this function is reached.
+    """
+    if not isinstance(item, dict):
+        return None
+
+    candidates = (
+        item.get("image_url"), item.get("imageUrl"), item.get("image"),
+        item.get("posterUrl"), item.get("poster_url"), item.get("poster"),
+        item.get("posterPath"), item.get("poster_path"),
+        item.get("bannerImage"), item.get("banner_image"),
+        item.get("showBannerImage"), item.get("show_banner_image"),
+        item.get("cover"), item.get("cover_url"), item.get("thumbnail"),
+    )
+    for value in candidates:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    for key in ("show", "media", "data", "showDetails", "show_details"):
+        nested = item.get(key)
+        if isinstance(nested, dict):
+            image = _m19_serializd_image_url(nested)
+            if image:
+                return image
+    return None
+
+
+def _m19_serializd_library_row(item, currently_watching_ids=None, currently_watching_item=None):
+    """Normalize one Serializd watched-library item with account status.
+
+    Serializd's watched-page payload gives us the watched season IDs and total
+    season/episode counts, while its dedicated currently-watching endpoint
+    gives us the live ``watching`` state. Combining those two lightweight
+    account surfaces avoids per-show detail calls.
+    """
+    title = item.get("showName") or item.get("name") or "Unknown title"
+    show_id = item.get("showId", item.get("id"))
+    seasons = item.get("numSeasons", item.get("numberOfSeasons", item.get("seasonCount")))
+    episodes = item.get("numEpisodes", item.get("numberOfEpisodes", item.get("episodeCount")))
+
+    try:
+        total_seasons = int(seasons) if seasons not in (None, "") else 0
+    except (TypeError, ValueError):
+        total_seasons = 0
+
+    raw_season_ids = item.get("seasonIds") or item.get("season_ids") or []
+    watched_season_ids = []
+    if isinstance(raw_season_ids, (list, tuple, set)):
+        for value in raw_season_ids:
+            try:
+                sid = int(value)
+            except (TypeError, ValueError):
+                continue
+            if sid > 0 and sid not in watched_season_ids:
+                watched_season_ids.append(sid)
+
+    try:
+        show_key = int(show_id)
+    except (TypeError, ValueError):
+        show_key = None
+
+    is_watching = bool(show_key is not None and show_key in (currently_watching_ids or set()))
+    is_completed = bool(
+        total_seasons > 0
+        and len(watched_season_ids) >= total_seasons
+    )
+
+    if is_watching:
+        status = "watching"
+    elif is_completed:
+        status = "completed"
+    else:
+        status = "watched"
+
+    image_item = item
+    if currently_watching_item and not _m19_serializd_image_url(item):
+        image_item = {**item, **currently_watching_item}
+
+    return {
+        "service": "Serializd",
+        "id": show_id,
+        "title": title,
+        "seasons": seasons,
+        "episodes": episodes,
+        "watched_seasons": len(watched_season_ids),
+        "total_seasons": total_seasons or None,
+        "season_ids": watched_season_ids,
+        "status": status,
+        "currently_watching": is_watching,
+        "completed": is_completed,
+        "image_url": _m19_serializd_image_url(image_item),
+    }
+
+
+def _m19_serializd_show_id(item):
+    """Extract a Serializd show ID across watched/currently-watching payload shapes."""
+    if not isinstance(item, dict):
+        return None
+    candidates = [item.get("showId"), item.get("show_id"), item.get("id")]
+    nested = item.get("show")
+    if isinstance(nested, dict):
+        candidates.extend([nested.get("showId"), nested.get("show_id"), nested.get("id")])
+    for raw in candidates:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
 
 
 def _m19_serializd_library_rows():
-    """Normalize the existing Serializd watched library into UI rows."""
-    raw = get_watched_library() or []
-    rows = []
+    """Normalize Serializd library + live watching state without N+1 calls."""
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        watched_future = executor.submit(get_watched_library)
+        watching_future = executor.submit(get_currently_watching)
+        raw = watched_future.result() or []
+        try:
+            watching_raw = watching_future.result() or []
+        except Exception:
+            # The watched library remains authoritative enough to render the
+            # Library if the optional currently-watching surface is unavailable.
+            watching_raw = []
 
-    for item in raw:
-        if not isinstance(item, dict):
+    valid_items = [item for item in raw if isinstance(item, dict)]
+    watching_items = [item for item in watching_raw if isinstance(item, dict)]
+    watching_by_id = {}
+    for item in watching_items:
+        show_id = _m19_serializd_show_id(item)
+        if show_id is None:
             continue
+        watching_by_id[show_id] = item
 
+    rows_by_id = {}
+    for item in valid_items:
+        show_id = _m19_serializd_show_id(item)
+        row = _m19_serializd_library_row(
+            item,
+            set(watching_by_id),
+            watching_by_id.get(show_id),
+        )
+        if show_id is not None:
+            rows_by_id[show_id] = row
+
+    # The dedicated endpoint is the live source of truth for "currently
+    # watching". If a show is present there but missing from watchedpage_v2,
+    # retain it in the combined library rather than silently dropping it.
+    for show_id, item in watching_by_id.items():
+        if show_id in rows_by_id:
+            continue
         title = item.get("showName") or item.get("name") or "Unknown title"
-        show_id = item.get("showId", item.get("id"))
-        seasons = item.get("numberOfSeasons", item.get("seasonCount"))
-        episodes = item.get("numberOfEpisodes", item.get("episodeCount"))
-
-        rows.append({
+        rows_by_id[show_id] = {
             "service": "Serializd",
             "id": show_id,
             "title": title,
-            "seasons": seasons,
-            "episodes": episodes,
-        })
+            "seasons": None,
+            "episodes": None,
+            "watched_seasons": 0,
+            "total_seasons": None,
+            "season_ids": [],
+            "status": "watching",
+            "currently_watching": True,
+            "completed": False,
+            "image_url": _m19_serializd_image_url(item),
+        }
 
-    return rows
+    # Put live watching titles first in the same order Serializd reports them,
+    # then keep the original watched-library order for everything else.
+    ordered = []
+    seen = set()
+    for item in watching_items:
+        try:
+            show_id = int(item.get("showId", item.get("id")))
+        except (TypeError, ValueError):
+            continue
+        if show_id in rows_by_id and show_id not in seen:
+            ordered.append(rows_by_id[show_id])
+            seen.add(show_id)
+    for row in rows_by_id.values():
+        show_id = row.get("id")
+        if show_id not in seen:
+            ordered.append(row)
+            seen.add(show_id)
+    return ordered
 
 
 def m19_library():
-    """Read both connected libraries without writing local or service data."""
+    """Read both connected libraries in parallel without writing service data."""
     result = {
         "workflow_id": M19_WORKFLOW_ID,
         "mal": [],
@@ -5809,16 +5988,28 @@ def m19_library():
         "errors": [],
     }
 
-    try:
-        result["mal"] = _m19_mal_library_rows()
-    except Exception as exc:
-        result["errors"].append(f"MAL library: {exc}")
+    def load_mal():
+        try:
+            return _m19_mal_library_rows(), None
+        except Exception as exc:
+            return [], f"MAL library: {exc}"
 
-    try:
-        result["serializd"] = _m19_serializd_library_rows()
-    except Exception as exc:
-        result["errors"].append(f"Serializd library: {exc}")
+    def load_serializd():
+        try:
+            return _m19_serializd_library_rows(), None
+        except Exception as exc:
+            return [], f"Serializd library: {exc}"
 
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        mal_future = executor.submit(load_mal)
+        serializd_future = executor.submit(load_serializd)
+        result["mal"], mal_error = mal_future.result()
+        result["serializd"], serializd_error = serializd_future.result()
+
+    if mal_error:
+        result["errors"].append(mal_error)
+    if serializd_error:
+        result["errors"].append(serializd_error)
     return result
 
 

@@ -1,17 +1,20 @@
 from __future__ import annotations
 from typing import Any
+from concurrent.futures import ThreadPoolExecutor
 import os
-import requests
 
 from app.backend.core.credentials import get_service_credentials, set_credentials, delete_service_credentials
 from app.backend.services.auth import get_mal_auth_status, start_mal_auth, disconnect_mal, set_mal_client_id, mal_client_id_configured
 from app.backend.core import waymark_core as core
+from app.backend.services.mal import get_anime_details as mal_get_anime_details
 from app.backend.services.serializd import get_access_token as serializd_get_access_token, connect_with_token as serializd_connect_with_token, disconnect as serializd_disconnect, get_connection_status as serializd_connection_status
 from app.backend.services.serializd import (
     search_catalog,
     get_show,
     get_season,
     get_show_watch_state,
+    get_watched_library,
+    get_currently_watching,
     get_watched_episode_logs,
     log_episode,
     add_episode_rating,
@@ -20,9 +23,13 @@ from app.backend.services.serializd import (
     update_review_log,
     delete_review_log,
     get_full_diary,
+    find_diary_entries,
     rate_episode,
     rate_season,
     rate_series,
+    mark_episode_watched,
+    mark_season_watched,
+    mark_series_watched,
 )
 
 SERIALIZD_API = "https://serializddesktop.onrender.com/api"
@@ -84,23 +91,10 @@ def _normalize_serializd_image(value: Any) -> str | None:
     return url if url.startswith("https://") else None
 
 def _mal_details(anime_id: int) -> dict[str, Any]:
-    # MAL returns the canonical API field names (mean, num_episodes,
-    # start_date, average_episode_duration). The desktop UI uses a
-    # presentation contract, so normalize them here rather than making
-    # the frontend know MAL's API schema.
-    token = core.mal_get_access_token()
-    r = requests.get(
-        f"https://api.myanimelist.net/v2/anime/{int(anime_id)}",
-        headers={"Authorization": f"Bearer {token}"},
-        params={"fields": (
-            "id,title,main_picture,alternative_titles,start_date,end_date,synopsis,mean,"
-            "rank,popularity,genres,status,num_episodes,start_season,"
-            "broadcast,source,average_episode_duration,studios"
-        )},
-        timeout=20,
-    )
-    r.raise_for_status()
-    raw = r.json()
+    # Fetch the full anime detail and the current user's MAL list status in
+    # one pooled HTTP request. The Watch flow previously needed a second
+    # request solely to obtain my_list_status.
+    raw = mal_get_anime_details(int(anime_id))
     details = dict(raw)
 
     seconds = raw.get("average_episode_duration")
@@ -126,30 +120,17 @@ def _mal_details(anime_id: int) -> dict[str, Any]:
     })
     return details
 
+
 def _sz_details(show_id: int) -> dict[str, Any]:
-    # This is the verified Serializd web/mobile detail surface. It exposes
-    # showDetails plus the community averageRating used by the UI.
-    r = requests.get(
-        f"{SERIALIZD_MOBILE}/show_v2_part_1/{int(show_id)}",
-        params={"optimize": "false"},
-        headers=_sz_headers(),
-        timeout=20,
-    )
-    r.raise_for_status()
-    data = r.json()
-    if not isinstance(data, dict):
-        return {}
+    # Reuse the Serializd service-layer show reader instead of issuing a
+    # second direct HTTP request. get_show() uses the verified mobile detail
+    # endpoint and caches the response, so the immediately-following
+    # watch_seasons() call can reuse the same show payload.
+    details = dict(get_show(int(show_id)) or {})
 
-    show = data.get("showDetails")
-    details = dict(show) if isinstance(show, dict) else dict(data)
-
-    for key in ("averageRating", "ratings"):
-        if key in data:
-            details[key] = data[key]
-        if isinstance(show, dict) and key in show:
-            details[key] = show[key]
-
-    # Normalize likely naming variants for the desktop UI.
+    # Normalize likely naming variants for the desktop UI. Keep this small
+    # presentation-only normalization here; the service owns the network
+    # request and cache.
     seasons = details.get("seasons")
     if isinstance(seasons, list):
         total = 0
@@ -191,13 +172,13 @@ def search_catalogs(query: str, is_anime: bool, media_type: str) -> dict[str, An
         "read_only": True,
     }
 
-    if use_mal:
+    def fetch_mal():
         try:
-            out["mal"]["results"] = (core.search_anime(query) or [])[:10]
+            return (core.search_anime(query) or [])[:10], None
         except Exception as e:
-            out["mal"]["error"] = str(e)
+            return [], str(e)
 
-    if use_serializd:
+    def fetch_serializd():
         try:
             serializd_results = (search_catalog(query) or [])[:10]
             normalized_results = []
@@ -215,9 +196,28 @@ def search_catalogs(query: str, is_anime: bool, media_type: str) -> dict[str, An
                             item["image_url"] = normalized
                             break
                 normalized_results.append(item)
-            out["serializd"]["results"] = normalized_results
+            return normalized_results, None
         except Exception as e:
-            out["serializd"]["error"] = str(e)
+            return [], str(e)
+
+    # MAL and Serializd searches are independent read-only operations. When
+    # both catalogs are needed, run them concurrently so search latency is
+    # approximately the slower service rather than the sum of both. Keep the
+    # per-service error isolation of the original sequential implementation.
+    if use_mal and use_serializd:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            mal_future = executor.submit(fetch_mal)
+            serializd_future = executor.submit(fetch_serializd)
+            mal_results, mal_error = mal_future.result()
+            serializd_results, serializd_error = serializd_future.result()
+        out["mal"]["results"] = mal_results
+        out["mal"]["error"] = mal_error
+        out["serializd"]["results"] = serializd_results
+        out["serializd"]["error"] = serializd_error
+    elif use_mal:
+        out["mal"]["results"], out["mal"]["error"] = fetch_mal()
+    elif use_serializd:
+        out["serializd"]["results"], out["serializd"]["error"] = fetch_serializd()
 
     if use_mal:
         normalized_mal = []
@@ -249,6 +249,15 @@ def select_result(service: str, results: list[dict[str, Any]], index: int) -> di
         if not ident:
             raise ValueError("Selected MAL result has no anime ID.")
         details = _mal_details(int(ident))
+        # Carry the user-specific MAL list status alongside the selected
+        # result. The Watch renderer already consumes selected.list_status,
+        # so this preserves that contract without a second /my_list_status
+        # request. Missing my_list_status simply means the anime is not on the
+        # user's list, which is a valid state for a new Watch entry.
+        selected = dict(selected)
+        list_status = details.get("my_list_status") if isinstance(details, dict) else None
+        if isinstance(list_status, dict):
+            selected["list_status"] = list_status
     elif service == "serializd":
         ident = selected.get("id")
         if not ident:
@@ -311,7 +320,35 @@ def review_seasons(show_id: int) -> dict[str, Any]:
     show_id = int(show_id)
     if show_id <= 0:
         raise ValueError("Serializd show ID is required.")
-    show = get_show(show_id) or {}
+    # These reads are independent. Run them together so cold-cache Watch
+    # navigation is bounded by the slowest Serializd read rather than the sum
+    # of show metadata + watched-library + currently-watching latency.
+    show = {}
+    watched_library = []
+    currently_watching_items = []
+    if include_account_state:
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            show_future = executor.submit(get_show, show_id)
+            watched_future = executor.submit(get_watched_library)
+            watching_future = executor.submit(get_currently_watching)
+            # Preserve the old failure isolation: account-state reads are
+            # useful enhancements, but a transient failure in one of them
+            # must not prevent the season list itself from loading.
+            try:
+                show = show_future.result() or {}
+            except Exception:
+                show = {}
+            try:
+                watched_library = watched_future.result() or []
+            except Exception:
+                watched_library = []
+            try:
+                currently_watching_items = watching_future.result() or []
+            except Exception:
+                currently_watching_items = []
+    else:
+        show = get_show(show_id) or {}
+
     seasons = show.get("seasons", []) if isinstance(show, dict) else []
     out = []
     for season in seasons if isinstance(seasons, list) else []:
@@ -435,6 +472,11 @@ def review_execute(payload: dict[str, Any]) -> dict[str, Any]:
                 tags=tags,
                 backdate=backdate,
             )
+            # A Serializd review/log is not sufficient to establish watched
+            # state. Reviewing an episode necessarily means the user has
+            # watched it, so make that state explicit after the review write.
+            watched_result = mark_episode_watched(show_id, season_id, episode_number, delay_after=False)
+            watched_operation = "episode"
         elif target == "season":
             result = log_season_review(
                 show_id, season_id,
@@ -447,6 +489,10 @@ def review_execute(payload: dict[str, Any]) -> dict[str, Any]:
                 tags=tags,
                 backdate=backdate,
             )
+            # Season review writes the diary/review entry, but does not itself
+            # establish season watched state. Explicitly mark the season.
+            watched_result = mark_season_watched(show_id, season_id, delay_after=False)
+            watched_operation = "season"
         else:
             result = log_series_review(
                 show_id,
@@ -459,25 +505,52 @@ def review_execute(payload: dict[str, Any]) -> dict[str, Any]:
                 tags=tags,
                 backdate=backdate,
             )
-        return {"ok": True, "target": target, "result": result}
+            # A series review does not establish show/season watched state.
+            # Use the verified watched_v2 route for every season returned by
+            # Serializd so the series is represented as watched.
+            watched_result = mark_series_watched(show_id, delay_after=False)
+            watched_operation = "series"
+        return {
+            "ok": True,
+            "target": target,
+            "result": result,
+            "watched": True,
+            "watched_operation": watched_operation,
+            "watched_result": watched_result,
+        }
     except Exception as exc:
-        return {"ok": False, "target": target, "error": str(exc)}
+        return {
+            "ok": False,
+            "target": target,
+            "error": str(exc),
+            "review_saved": "result" in locals(),
+        }
 
 
 def review_existing(payload: dict[str, Any]) -> dict[str, Any]:
-    """Find the user's existing diary review/log entries for a target."""
+    """Find the user's existing diary review/log entries for a target.
+
+    Serializd diary retrieval is cached and indexed by show/season/episode,
+    so repeated rating/review lookups avoid rescanning the complete diary.
+    """
     target, show_id, season_id, episode_number, *_ = _review_payload_values({**payload, "stars": None})
+
+    if target == "series":
+        entries = find_diary_entries(show_id, None, None)
+    elif target == "season":
+        entries = find_diary_entries(show_id, season_id, None)
+    else:
+        entries = find_diary_entries(show_id, season_id, episode_number)
+
     matches = []
-    for entry in get_full_diary():
+    for entry in entries:
         if not isinstance(entry, dict):
-            continue
-        try:
-            if int(entry.get("showId", -1)) != show_id:
-                continue
-        except (TypeError, ValueError):
             continue
         entry_season = entry.get("seasonId")
         entry_episode = entry.get("episodeNumber")
+
+        # The index key already narrows the lookup. These checks preserve the
+        # previous strict target semantics in case Serializd omits a field.
         if target == "series":
             if entry_season is not None or entry_episode is not None:
                 continue
@@ -493,6 +566,7 @@ def review_existing(payload: dict[str, Any]) -> dict[str, Any]:
                     continue
             except (TypeError, ValueError):
                 continue
+
         review_id = entry.get("reviewId", entry.get("review_id", entry.get("id")))
         matches.append({
             **entry,
@@ -518,10 +592,14 @@ def review_update(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Updated rating must be between 0.5 and 5.0 in 0.5 increments.")
     rating = None if stars is None else int(stars * 2)
     try:
+        show_id = int(payload["show_id"]) if payload.get("show_id") not in (None, "", 0) else None
+        season_id = int(payload["season_id"]) if payload.get("season_id") not in (None, "", 0) else None
+        episode_number = int(payload["episode_number"]) if payload.get("episode_number") not in (None, "", 0) else None
+        target = str(payload.get("target") or "").lower()
         result = update_review_log(
             review_id,
-            show_id=(int(payload["show_id"]) if payload.get("show_id") not in (None, "", 0) else None),
-            season_id=(int(payload["season_id"]) if payload.get("season_id") not in (None, "", 0) else None),
+            show_id=show_id,
+            season_id=season_id,
             review_text=str(payload.get("review_text") or ""),
             rating=rating,
             contains_spoiler=bool(payload.get("contains_spoiler", False)),
@@ -529,12 +607,31 @@ def review_update(payload: dict[str, Any]) -> dict[str, Any]:
             is_rewatch=bool(payload.get("is_rewatch", False)),
             like=bool(payload.get("like", False)),
             tags=payload.get("tags") if isinstance(payload.get("tags"), list) else [],
-            episode_number=(int(payload["episode_number"]) if payload.get("episode_number") not in (None, "", 0) else None),
+            episode_number=episode_number,
             backdate=payload.get("backdate") or None,
         )
-        return {"ok": True, "result": result}
+        if not show_id:
+            raise ValueError("Serializd show ID is required to restore watched state.")
+        if target == "episode":
+            watched_result = mark_episode_watched(show_id, season_id, episode_number, delay_after=False)
+            watched_operation = "episode"
+        elif target == "season":
+            watched_result = mark_season_watched(show_id, season_id, delay_after=False)
+            watched_operation = "season"
+        elif target == "series":
+            watched_result = mark_series_watched(show_id, delay_after=False)
+            watched_operation = "series"
+        else:
+            raise ValueError("Review target must be series, season, or episode.")
+        return {
+            "ok": True,
+            "result": result,
+            "watched": True,
+            "watched_operation": watched_operation,
+            "watched_result": watched_result,
+        }
     except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": str(exc), "review_saved": "result" in locals()}
 
 
 def review_delete(payload: dict[str, Any]) -> dict[str, Any]:
@@ -634,30 +731,75 @@ def serializd_rate(payload: dict[str, Any]) -> dict[str, Any]:
                 rating=int(stars * 2),
                 review_text=existing.get("review_text", ""),
                 backdate=existing.get("backdate") or None,
+                delay_after=False,
             )
-            return {"ok": True, "mode": "updated", "result": result}
+            # Updating an existing rating is still a rating action: the user
+            # has watched the selected target. Keep watched state explicit
+            # instead of relying on Serializd's diary endpoint to infer it.
+            if target == "series":
+                watched_result = mark_series_watched(show_id, delay_after=False)
+                watched_operation = "series"
+            elif target == "season":
+                watched_result = mark_season_watched(show_id, season_id, delay_after=False)
+                watched_operation = "season"
+            else:
+                watched_result = mark_episode_watched(show_id, season_id, episode_number, delay_after=False)
+                watched_operation = "episode"
+            return {
+                "ok": True,
+                "mode": "updated",
+                "result": result,
+                "watched": watched_result,
+                "watched_operation": watched_operation,
+            }
         if target == "series":
-            result = rate_series(show_id, stars)
-        elif target == "season":
-            result = rate_season(show_id, season_id, stars)
-        else:
-            result = rate_episode(show_id, season_id, episode_number, stars)
-            # Rating an episode is a diary/log action in Serializd, but also
-            # explicitly set watched state so WAYMARK's progress view agrees
-            # immediately with the rating action.
-            watched_result = None
-            try:
-                from app.backend.services.serializd import mark_episode_watched
-                watched_result = mark_episode_watched(show_id, season_id, episode_number)
-            except Exception as watched_exc:
-                return {
-                    "ok": False,
-                    "mode": "partial",
-                    "result": result,
-                    "error": f"Episode rating was written, but watched state could not be updated: {watched_exc}",
-                }
-            return {"ok": True, "mode": "created", "result": result, "watched": watched_result}
-        return {"ok": True, "mode": "created", "result": result}
+            result = rate_series(show_id, stars, delay_after=False)
+            # A series rating implies the series has been watched. Mark every
+            # available season through the verified watched_v2 route.
+            watched_result = mark_series_watched(show_id, delay_after=False)
+            return {
+                "ok": True,
+                "mode": "created",
+                "result": result,
+                "watched": watched_result,
+                "watched_operation": "series",
+            }
+        if target == "season":
+            result = rate_season(show_id, season_id, stars, delay_after=False)
+            # A season rating implies the selected season has been watched.
+            watched_result = mark_season_watched(show_id, season_id, delay_after=False)
+            return {
+                "ok": True,
+                "mode": "created",
+                "result": result,
+                "watched": watched_result,
+                "watched_operation": "season",
+            }
+
+        # Episode rating/log writes are kept delay-free here because the
+        # explicit watched-state write immediately follows them. The normal
+        # service-level delay is therefore unnecessary duplicate latency.
+        result = rate_episode(show_id, season_id, episode_number, stars, delay_after=False)
+        # Rating an episode is a diary/log action in Serializd, but also
+        # explicitly set watched state so WAYMARK's progress view agrees
+        # immediately with the rating action.
+        try:
+            watched_result = mark_episode_watched(show_id, season_id, episode_number, delay_after=False)
+        except Exception as watched_exc:
+            return {
+                "ok": False,
+                "mode": "partial",
+                "result": result,
+                "review_saved": True,
+                "error": f"Episode rating was written, but watched state could not be updated: {watched_exc}",
+            }
+        return {
+            "ok": True,
+            "mode": "created",
+            "result": result,
+            "watched": watched_result,
+            "watched_operation": "episode",
+        }
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
@@ -845,6 +987,28 @@ def history(limit=20):
 
 
 # M20.5.7 — Watch workflow bridge
+
+def _serializd_show_id(item: dict[str, Any]) -> int | None:
+    """Extract a Serializd show ID across current API payload shapes."""
+    if not isinstance(item, dict):
+        return None
+    candidates = [
+        item.get("showId"),
+        item.get("show_id"),
+        item.get("id"),
+    ]
+    nested = item.get("show")
+    if isinstance(nested, dict):
+        candidates.extend([nested.get("showId"), nested.get("show_id"), nested.get("id")])
+    for raw in candidates:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
 def watch_seasons(show_id: int, *, include_account_state: bool = True) -> dict[str, Any]:
     """Return numbered Serializd seasons using the show response only.
 
@@ -856,7 +1020,32 @@ def watch_seasons(show_id: int, *, include_account_state: bool = True) -> dict[s
     if show_id <= 0:
         raise ValueError("Serializd show ID is required.")
 
-    show = get_show(show_id) or {}
+    # These reads are independent. Run them together so cold-cache Watch
+    # navigation is bounded by the slowest Serializd read rather than the sum
+    # of show metadata + watched-library + currently-watching latency.
+    show = {}
+    watched_library = []
+    currently_watching_items = []
+    if include_account_state:
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            show_future = executor.submit(get_show, show_id)
+            watched_future = executor.submit(get_watched_library)
+            watching_future = executor.submit(get_currently_watching)
+            # Show metadata is required to build the season list, so preserve
+            # the old behavior if that primary request fails. Account-state
+            # reads below remain optional and isolated.
+            show = show_future.result() or {}
+            try:
+                watched_library = watched_future.result() or []
+            except Exception:
+                watched_library = []
+            try:
+                currently_watching_items = watching_future.result() or []
+            except Exception:
+                currently_watching_items = []
+    else:
+        show = get_show(show_id) or {}
+
     seasons = show.get("seasons", []) if isinstance(show, dict) else []
     out = []
 
@@ -958,11 +1147,19 @@ def watch_seasons(show_id: int, *, include_account_state: bool = True) -> dict[s
     # completed-show/rewatch behavior. Rating/Progress can explicitly skip it
     # because those screens only need season metadata.
     show_state = None
+    currently_watching = False
     if include_account_state:
-        try:
-            show_state = get_show_watch_state(show_id)
-        except Exception:
-            show_state = None
+        # get_watched_library() was already fetched in parallel above. Reuse
+        # it here instead of issuing another account-wide request.
+        for item in watched_library:
+            if _serializd_show_id(item) == show_id:
+                show_state = item
+                break
+        currently_watching = any(
+            _serializd_show_id(item) == show_id
+            for item in currently_watching_items
+            if isinstance(item, dict)
+        )
 
     show_completed = False
     show_watched = bool(show_state)
@@ -987,6 +1184,7 @@ def watch_seasons(show_id: int, *, include_account_state: bool = True) -> dict[s
         "seasons": out,
         "show_watched": show_watched,
         "show_completed": show_completed,
+        "currently_watching": currently_watching,
         "watched_season_count": 0,
         "total_season_count": len(out),
         "progress_deferred": True,
@@ -998,13 +1196,63 @@ def serializd_seasons(show_id: int) -> dict[str, Any]:
     return watch_seasons(show_id, include_account_state=False)
 
 def watch_episodes(show_id: int, season_number: int) -> dict[str, Any]:
-    """Return numbered Serializd episodes for one selected season."""
+    """Return numbered Serializd episodes and watched state for one season.
+
+    The selected season ID is already present in the show metadata loaded by
+    Watch. Reuse that cached metadata to start the season-detail request and
+    the watched-episode-log request concurrently. This removes the old
+    serial dependency without changing the bridge contract.
+    """
     show_id = int(show_id)
     season_number = int(season_number)
     if show_id <= 0 or season_number <= 0:
         raise ValueError("Valid Serializd show and season are required.")
 
-    detail = get_season(show_id, season_number) or {}
+    season_id = 0
+    try:
+        show = get_show(show_id) or {}
+        seasons = show.get("seasons", []) if isinstance(show, dict) else []
+        for season in seasons or []:
+            if not isinstance(season, dict):
+                continue
+            raw_number = season.get("seasonNumber", season.get("season_number", season.get("number")))
+            try:
+                number = int(raw_number)
+            except (TypeError, ValueError):
+                continue
+            if number != season_number:
+                continue
+            raw_id = season.get("seasonId", season.get("id"))
+            try:
+                season_id = int(raw_id)
+            except (TypeError, ValueError):
+                season_id = 0
+            break
+    except Exception:
+        season_id = 0
+
+    if season_id > 0:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            detail_future = executor.submit(get_season, show_id, season_number)
+            watched_future = executor.submit(get_watched_episode_logs, show_id, season_id)
+            detail = detail_future.result() or {}
+            try:
+                logs = watched_future.result() or []
+            except Exception:
+                logs = []
+    else:
+        # Preserve the old safe fallback if a future Serializd payload stops
+        # exposing the season ID in show metadata.
+        detail = get_season(show_id, season_number) or {}
+        try:
+            resolved_season_id = int(detail.get("seasonId") or detail.get("id") or 0)
+        except (TypeError, ValueError):
+            resolved_season_id = 0
+        try:
+            logs = get_watched_episode_logs(show_id, resolved_season_id) if resolved_season_id > 0 else []
+        except Exception:
+            logs = []
+
     episodes = detail.get("episodes", []) if isinstance(detail, dict) else []
     out = []
     for ep in episodes or []:
@@ -1026,18 +1274,14 @@ def watch_episodes(show_id: int, season_number: int) -> dict[str, Any]:
         raise ValueError("No numbered episodes were found in this Serializd season.")
 
     watched_episode_numbers: list[int] = []
-    try:
-        logs = get_watched_episode_logs(show_id, int((detail.get("seasonId") or detail.get("id") or 0)))
-        for log in logs:
-            try:
-                ep_number = int(log.get("episodeNumber"))
-            except (TypeError, ValueError):
-                continue
-            if ep_number > 0 and ep_number not in watched_episode_numbers:
-                watched_episode_numbers.append(ep_number)
-        watched_episode_numbers.sort()
-    except Exception:
-        watched_episode_numbers = []
+    for log in logs:
+        try:
+            ep_number = int(log.get("episodeNumber"))
+        except (TypeError, ValueError):
+            continue
+        if ep_number > 0 and ep_number not in watched_episode_numbers:
+            watched_episode_numbers.append(ep_number)
+    watched_episode_numbers.sort()
 
     return {
         "show_id": show_id,
@@ -1139,6 +1383,9 @@ def watch_execute_batch(payload: dict[str, Any]) -> dict[str, Any]:
     # Serializd rewatch is an explicit batch flag. Keep it separate from
     # MAL status so a Serializd rewatch never changes MAL state implicitly.
     serializd_rewatch = bool(payload.get("serializd_rewatch", False))
+    serializd_watching_choice = payload.get("serializd_watching_choice")
+    if serializd_watching_choice not in {True, False, None}:
+        serializd_watching_choice = None
 
     mal_total = payload.get("mal_total_episodes")
     try:
@@ -1187,42 +1434,117 @@ def watch_execute_batch(payload: dict[str, Any]) -> dict[str, Any]:
                 lambda: core.update_status(mal_id, status),
             )
 
-    # Serializd retains the already-verified core write behavior. When the
-    # user selects every numbered episode in a season for a normal Watch, use
-    # the season-level watched endpoint so a full season is one server write.
-    # Partial selections remain episode-by-episode. Rewatch remains
-    # episode-by-episode because no verified season-level rewatch endpoint is
-    # available.
+    # Serializd account state is refreshed once before the batch. This lets a
+    # normal Watch operation skip episodes that were already logged and, more
+    # importantly, detect the case where the user watches the final missing
+    # episode of a season one episode at a time.
+    serializd_season_completed = False
+    serializd_show_completed = False
+    currently_watching_before = False
+    serializd_skipped_existing = []
+    serializd_live_read_error = None
+    currently_watching_after = False
+
     if mode in {"serializd", "both"}:
-        full_serializd_season = bool(
-            season_total
-            and set(serializd_episodes) == set(range(1, season_total + 1))
+        from app.backend.services.serializd import (
+            get_watched_episode_logs,
+            get_watched_library,
+            get_currently_watching,
+            mark_episode_watched,
+            mark_season_watched,
+            mark_show_watching,
+            log_episode,
         )
 
-        if not serializd_rewatch and full_serializd_season:
-            from app.backend.services.serializd import mark_season_watched
-            run_operation(
-                f"Serializd season watched → S{season_number:02d}",
-                lambda: mark_season_watched(serializd_id, serializd_season_id),
-            )
+        currently_watching_before = False
+        try:
+            for item in get_currently_watching():
+                if not isinstance(item, dict):
+                    continue
+                if _serializd_show_id(item) == serializd_id:
+                    currently_watching_before = True
+                    break
+        except Exception:
+            currently_watching_before = False
+
+        watched_before = set()
+        try:
+            for record in get_watched_episode_logs(serializd_id, serializd_season_id):
+                if not isinstance(record, dict):
+                    continue
+                raw = record.get("episodeNumber", record.get("episode_number"))
+                if raw is None and isinstance(record.get("episode"), dict):
+                    raw = record["episode"].get("episodeNumber", record["episode"].get("episode_number"))
+                try:
+                    number = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if number > 0:
+                    watched_before.add(number)
+        except Exception as exc:
+            serializd_live_read_error = str(exc)
+
+        serializd_skipped_existing = sorted(watched_before.intersection(serializd_episodes))
+        to_log = serializd_episodes if serializd_rewatch else [
+            episode for episode in serializd_episodes if episode not in watched_before
+        ]
+        combined_watched = set(watched_before).union(serializd_episodes)
+        serializd_season_completed = bool(
+            season_total and combined_watched >= set(range(1, season_total + 1))
+        )
+
+        # A full normal-watch selection can use the efficient season endpoint
+        # when the season was not already completely watched. Partial selections
+        # remain episode-level writes. Rewatch remains episode-level so we do not
+        # change the existing rewatch semantics.
+        if not serializd_rewatch and serializd_season_completed:
+            if to_log:
+                if len(to_log) == season_total and not watched_before:
+                    run_operation(
+                        f"Serializd season watched → S{season_number:02d}",
+                        lambda: mark_season_watched(serializd_id, serializd_season_id),
+                    )
+                else:
+                    for episode in to_log:
+                        run_operation(
+                            f"Serializd episode → S{season_number:02d}E{episode:02d}",
+                            lambda episode=episode: core._chat_execute_anime_tv_action(
+                                mal_id=None,
+                                serializd_id=serializd_id,
+                                serializd_season_id=serializd_season_id,
+                                season_number=season_number,
+                                episode_number=episode,
+                                mal_episode_number=None,
+                                mal_total_episodes=None,
+                                mal_rating=None,
+                                serializd_stars=None,
+                                status=None,
+                                review_text="",
+                                season_completed=False,
+                                season_rating=None,
+                                season_review_text="",
+                                final_episode=season_total,
+                            ),
+                        )
+                    # The final missing episode completes the season even when
+                    # earlier episodes were already logged before this batch.
+                    if all(op.get("ok") for op in operations if op.get("name", "").startswith("Serializd")):
+                        run_operation(
+                            f"Serializd season watched → S{season_number:02d}",
+                            lambda: mark_season_watched(serializd_id, serializd_season_id),
+                        )
+            else:
+                # The selected episodes were already watched, but the account
+                # may not have a season-level watched marker yet. Make the
+                # season state explicit so WAYMARK and Serializd agree.
+                run_operation(
+                    f"Serializd season watched → S{season_number:02d}",
+                    lambda: mark_season_watched(serializd_id, serializd_season_id),
+                )
         else:
             if serializd_rewatch:
-                from app.backend.services.serializd import (
-                    mark_episode_watched,
-                    log_episode,
-                    add_episode_rating,
-                    mark_season_watched,
-                )
-
-            for index, episode in enumerate(serializd_episodes):
-                completed = bool(
-                    season_total
-                    and set(serializd_episodes) >= set(range(1, season_total + 1))
-                    and index == len(serializd_episodes) - 1
-                )
-
-                if serializd_rewatch:
-                    def run_serializd_rewatch(episode=episode, completed=completed):
+                for episode in to_log:
+                    def run_serializd_rewatch(episode=episode):
                         mark_episode_watched(serializd_id, serializd_season_id, episode)
                         log_episode(
                             serializd_id,
@@ -1232,18 +1554,22 @@ def watch_execute_batch(payload: dict[str, Any]) -> dict[str, Any]:
                             review_text="",
                             is_rewatch=True,
                         )
-                        if completed:
-                            mark_season_watched(serializd_id, serializd_season_id)
-                        return {"rewatch": True, "season_completed": completed}
+                        return {"rewatch": True}
 
                     run_operation(
                         f"Serializd rewatch → S{season_number:02d}E{episode:02d}",
                         run_serializd_rewatch,
                     )
-                else:
+                if serializd_season_completed and to_log:
+                    run_operation(
+                        f"Serializd season watched → S{season_number:02d}",
+                        lambda: mark_season_watched(serializd_id, serializd_season_id),
+                    )
+            else:
+                for episode in to_log:
                     run_operation(
                         f"Serializd episode → S{season_number:02d}E{episode:02d}",
-                        lambda episode=episode, completed=completed: core._chat_execute_anime_tv_action(
+                        lambda episode=episode: core._chat_execute_anime_tv_action(
                             mal_id=None,
                             serializd_id=serializd_id,
                             serializd_season_id=serializd_season_id,
@@ -1255,12 +1581,64 @@ def watch_execute_batch(payload: dict[str, Any]) -> dict[str, Any]:
                             serializd_stars=None,
                             status=None,
                             review_text="",
-                            season_completed=completed,
+                            season_completed=False,
                             season_rating=None,
                             season_review_text="",
-                            final_episode=season_total if completed else None,
+                            final_episode=season_total,
                         ),
                     )
+
+        # Re-read the lightweight watched library after a successful season
+        # write. No show-detail requests are needed: watchedpage_v2 supplies
+        # seasonIds and numSeasons, which are enough to identify full-series
+        # completion.
+        if serializd_season_completed and not serializd_live_read_error:
+            try:
+                for item in get_watched_library():
+                    if _serializd_show_id(item) != serializd_id:
+                        continue
+                    raw_total = item.get("numSeasons", item.get("numberOfSeasons"))
+                    raw_watched = item.get("seasonIds", item.get("season_ids")) or []
+                    try:
+                        total_seasons = int(raw_total)
+                    except (TypeError, ValueError):
+                        total_seasons = 0
+                    watched_seasons = len({
+                        int(value) for value in raw_watched
+                        if str(value).strip().isdigit()
+                    })
+                    serializd_show_completed = bool(
+                        total_seasons > 0 and watched_seasons >= total_seasons
+                    )
+                    # Full-series completion is detected locally from the
+                    # verified watched-library state. Do not issue a guessed
+                    # show-level "completed" mutation: the current Serializd
+                    # web-client evidence only verifies the currently-watching
+                    # add route. The completion/removal write will be wired
+                    # separately once its live request is captured.
+                    break
+            except Exception:
+                serializd_show_completed = False
+
+        # A new normal watch can explicitly promote the show into Serializd's
+        # currently-watching list. This happens only after completion is known,
+        # so finishing the final season can never be briefly re-added as watching.
+        if (
+            not serializd_rewatch
+            and serializd_watching_choice is True
+            and not currently_watching_before
+            and not serializd_show_completed
+        ):
+            def _mark_serializd_watching():
+                nonlocal currently_watching_after
+                result = mark_show_watching(serializd_id, delay_after=False)
+                currently_watching_after = True
+                return result
+
+            run_operation(
+                "Serializd show status → watching",
+                _mark_serializd_watching,
+            )
 
     failed = [op for op in operations if not op["ok"]]
     succeeded = [op for op in operations if op["ok"]]
@@ -1268,11 +1646,11 @@ def watch_execute_batch(payload: dict[str, Any]) -> dict[str, Any]:
         "ok": bool(operations) and not failed,
         "partial": bool(failed and succeeded),
         "operations": operations,
-        "season_completed": bool(
-            season_total
-            and mode in {"serializd", "both"}
-            and set(serializd_episodes) >= set(range(1, season_total + 1))
-        ),
+        "season_completed": serializd_season_completed,
+        "show_completed": serializd_show_completed,
+        "currently_watching": currently_watching_before or currently_watching_after,
+        "skipped_existing": serializd_skipped_existing,
+        "live_read_error": serializd_live_read_error,
     }
 
 

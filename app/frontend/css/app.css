@@ -2676,3 +2676,1599 @@ body.waymark-setup-mode {
         flex-direction: column;
     }
 }
+
+/* ========================================================================== */
+/* M24 — Visual Identity Foundation                                           */
+/*                                                                              */
+/* Phase 2A: visual-only foundation. No application logic or persistence is   */
+/* changed here. Personalization values can replace these defaults later.      */
+/* ========================================================================== */
+
+:root {
+    --bg-deep: #09070f;
+    --bg: #0d0b14;
+    --sidebar: rgba(13, 11, 20, 0.94);
+    --surface: #15121e;
+    --surface-hover: #1d1828;
+    --surface-strong: #211b2e;
+    --surface-raised: #272034;
+    --border: #30283d;
+    --border-strong: #443756;
+    --text: #f7f4fb;
+    --muted: #9d96aa;
+    --muted-strong: #c0b9cb;
+    --accent: #9b6cff;
+    --accent-strong: #b18aff;
+    --accent-soft: rgba(155, 108, 255, 0.14);
+    --accent-glow: rgba(155, 108, 255, 0.26);
+    --accent-text: #100b18;
+    --success: #67d99a;
+    --danger: #ff7373;
+    --shadow-sm: 0 8px 24px rgba(0, 0, 0, 0.22);
+    --shadow-md: 0 18px 48px rgba(0, 0, 0, 0.30);
+}
+
+html,
+body {
+    background: var(--bg-deep);
+}
+
+body {
+    position: relative;
+    isolation: isolate;
+    background:
+        radial-gradient(circle at 88% -10%, var(--accent-soft), transparent 34%),
+        radial-gradient(circle at 12% 100%, rgba(72, 52, 116, 0.12), transparent 30%),
+        var(--bg-deep);
+}
+
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: -1;
+    background:
+        linear-gradient(180deg, rgba(9, 7, 15, 0.08), rgba(9, 7, 15, 0.36)),
+        radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.018), transparent 42%);
+}
+
+.app-shell {
+    position: relative;
+    z-index: 1;
+}
+
+.sidebar {
+    background: linear-gradient(180deg, rgba(17, 13, 25, 0.97), rgba(11, 9, 16, 0.97));
+    border-right-color: rgba(155, 108, 255, 0.14);
+    box-shadow: 18px 0 48px rgba(0, 0, 0, 0.16);
+}
+
+.brand-mark.logo-mark {
+    background: #09070f;
+    border-color: rgba(155, 108, 255, 0.32);
+    box-shadow: 0 0 24px rgba(155, 108, 255, 0.12);
+}
+
+.brand-name {
+    letter-spacing: 0.11em;
+}
+
+.nav-item {
+    border-color: transparent;
+    transition: background .18s ease, color .18s ease, border-color .18s ease, transform .18s ease;
+}
+
+.nav-item:hover {
+    background: rgba(155, 108, 255, 0.08);
+    color: var(--text);
+    border-color: rgba(155, 108, 255, 0.10);
+}
+
+.nav-item.active {
+    position: relative;
+    background: linear-gradient(90deg, rgba(155, 108, 255, 0.17), rgba(155, 108, 255, 0.055));
+    border-color: rgba(155, 108, 255, 0.18);
+    color: var(--text);
+    box-shadow: inset 0 0 24px rgba(155, 108, 255, 0.035);
+}
+
+.nav-item.active::before {
+    background: var(--accent) !important;
+    box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.nav-icon {
+    color: var(--muted);
+}
+
+.nav-item.active .nav-icon {
+    color: var(--accent-strong);
+}
+
+.ready-status {
+    border-top-color: var(--border);
+}
+
+.main-area {
+    background: transparent;
+}
+
+.topbar {
+    background: rgba(12, 9, 18, 0.66);
+    border-bottom-color: rgba(155, 108, 255, 0.12);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+}
+
+.profile {
+    padding: 5px 8px 5px 5px;
+    border: 1px solid rgba(155, 108, 255, 0.12);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.profile-mark {
+    border-color: rgba(155, 108, 255, 0.42);
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    box-shadow: inset 0 0 18px rgba(155, 108, 255, 0.06);
+}
+
+.view {
+    background: transparent;
+}
+
+.eyebrow,
+.setup-eyebrow {
+    color: var(--accent-strong);
+}
+
+h1,
+h2,
+h3,
+strong {
+    color: var(--text);
+}
+
+p {
+    color: var(--muted-strong);
+}
+
+.command-card,
+.panel,
+.list-row,
+.action-card,
+.details-card,
+.home-stat-card,
+.home-activity-card,
+.library-card,
+.history-card,
+.review-card,
+.watch-card {
+    background: linear-gradient(145deg, rgba(29, 24, 40, 0.90), rgba(17, 14, 24, 0.94));
+    border-color: rgba(155, 108, 255, 0.12);
+    box-shadow: var(--shadow-sm);
+}
+
+.command-card {
+    background:
+        radial-gradient(circle at 0% 0%, rgba(155, 108, 255, 0.12), transparent 34%),
+        linear-gradient(120deg, rgba(30, 24, 42, 0.96), rgba(17, 14, 24, 0.96));
+    border-color: rgba(155, 108, 255, 0.18);
+}
+
+.action-card:hover,
+.list-row:hover {
+    background: linear-gradient(145deg, rgba(36, 29, 49, 0.96), rgba(20, 16, 29, 0.96));
+    border-color: rgba(155, 108, 255, 0.27);
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.25), 0 0 28px rgba(155, 108, 255, 0.045);
+}
+
+.panel .panel-icon,
+.command-icon,
+.mini-icon {
+    border-color: rgba(155, 108, 255, 0.18);
+    background: rgba(155, 108, 255, 0.055);
+    color: var(--accent-strong);
+}
+
+.btn,
+.btn-primary,
+.btn-choice,
+.search-header-actions .btn,
+.watch-header-actions .btn,
+.review-header-actions .btn,
+.library-header-actions .btn,
+.history-header-actions .btn,
+.details-actions .btn,
+.home-hero-actions .btn,
+.home-footer-row > .btn {
+    border-color: rgba(155, 108, 255, 0.24) !important;
+    background: rgba(255, 255, 255, 0.035) !important;
+    color: var(--text) !important;
+    box-shadow: none;
+}
+
+.btn:hover,
+.btn-choice:hover,
+.btn-primary:hover,
+.search-header-actions .btn:hover,
+.watch-header-actions .btn:hover,
+.review-header-actions .btn:hover,
+.library-header-actions .btn:hover,
+.history-header-actions .btn:hover,
+.details-actions .btn:hover,
+.home-hero-actions .btn:hover,
+.home-footer-row > .btn:hover {
+    background: rgba(155, 108, 255, 0.13) !important;
+    border-color: rgba(155, 108, 255, 0.42) !important;
+    color: #ffffff !important;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--accent-strong), var(--accent)) !important;
+    color: var(--accent-text) !important;
+    border-color: transparent !important;
+    box-shadow: 0 9px 28px var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, 0.28) !important;
+}
+
+.btn-primary:hover {
+    background: linear-gradient(135deg, #c19fff, var(--accent-strong)) !important;
+    color: #120c1d !important;
+    box-shadow: 0 11px 34px rgba(155, 108, 255, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.32) !important;
+}
+
+input,
+textarea,
+select,
+.search-bar input,
+.setup-field input {
+    background: rgba(9, 7, 15, 0.64) !important;
+    color: var(--text) !important;
+    border-color: var(--border-strong) !important;
+    caret-color: var(--accent-strong);
+}
+
+input::placeholder,
+textarea::placeholder,
+.search-bar input::placeholder {
+    color: #716b7d !important;
+}
+
+input:hover,
+textarea:hover,
+select:hover,
+.search-bar input:hover {
+    background: rgba(22, 17, 30, 0.86) !important;
+    border-color: rgba(155, 108, 255, 0.28) !important;
+}
+
+input:focus,
+textarea:focus,
+select:focus,
+.search-bar input:focus {
+    background: rgba(20, 15, 28, 0.92) !important;
+    color: var(--text) !important;
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px var(--accent-soft), 0 0 24px rgba(155, 108, 255, 0.07) !important;
+}
+
+select option {
+    background: #17121f;
+    color: var(--text);
+}
+
+.empty-state {
+    background: rgba(17, 14, 24, 0.58);
+    border-color: rgba(155, 108, 255, 0.22);
+}
+
+.toast {
+    background: linear-gradient(135deg, var(--accent-strong), var(--accent));
+    color: var(--accent-text);
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.34), 0 0 28px var(--accent-glow);
+}
+
+/* Media imagery gets a cinematic frame without changing its source behavior. */
+.poster,
+.media-poster,
+.detail-poster,
+.watch-poster,
+.library-poster,
+.history-poster {
+    box-shadow: 0 16px 34px rgba(0, 0, 0, 0.32);
+}
+
+/* Setup surfaces use the same identity as the main application. */
+body.waymark-setup-mode {
+    background:
+        radial-gradient(circle at 85% 5%, var(--accent-soft), transparent 32%),
+        radial-gradient(circle at 10% 90%, rgba(72, 52, 116, 0.13), transparent 30%),
+        var(--bg-deep);
+}
+
+.setup-card {
+    background:
+        radial-gradient(circle at 100% 0%, rgba(155, 108, 255, 0.10), transparent 32%),
+        linear-gradient(145deg, rgba(25, 20, 35, 0.96), rgba(13, 10, 19, 0.98));
+    border-color: rgba(155, 108, 255, 0.20);
+    box-shadow: var(--shadow-md), 0 0 60px rgba(155, 108, 255, 0.045);
+}
+
+.setup-service {
+    background: rgba(255, 255, 255, 0.025);
+    border-color: rgba(155, 108, 255, 0.12);
+}
+
+.setup-service:hover {
+    border-color: rgba(155, 108, 255, 0.22);
+    background: rgba(155, 108, 255, 0.035);
+}
+
+.setup-status {
+    border-color: rgba(155, 108, 255, 0.18);
+    background: rgba(155, 108, 255, 0.045);
+}
+
+.setup-footer {
+    border-top-color: rgba(155, 108, 255, 0.12);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .nav-item,
+    .btn,
+    .action-card,
+    .list-row {
+        transition: none !important;
+    }
+}
+
+/* ========================================================================== */
+/* M24 Phase 2B — Personalization UI                                          */
+/*                                                                              */
+/* UI/state only. Profile picture, background, and accent values currently     */
+/* live in frontend session state; persistence is intentionally deferred.      */
+/* ========================================================================== */
+
+:root {
+    --waymark-background-image: none;
+    --accent-strong-soft: rgba(155, 108, 255, 0.20);
+}
+
+body.has-waymark-background {
+    background-image:
+        radial-gradient(circle at 88% -10%, var(--accent-soft), transparent 34%),
+        radial-gradient(circle at 12% 100%, rgba(72, 52, 116, 0.12), transparent 30%),
+        var(--bg-deep);
+}
+
+body.has-waymark-background::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image:
+        linear-gradient(180deg, rgba(7, 5, 11, 0.34), rgba(7, 5, 11, 0.62)),
+        var(--waymark-background-image);
+    background-size: cover, cover;
+    background-position: center, center;
+    background-repeat: no-repeat;
+    opacity: 0.86;
+}
+
+body.has-waymark-background .app-shell {
+    z-index: 1;
+}
+
+body.has-waymark-background .main-area {
+    background: transparent;
+}
+
+body.has-waymark-background .view {
+    background: transparent;
+}
+
+body.has-waymark-background .topbar {
+    background: rgba(12, 9, 18, 0.54);
+}
+
+.profile-mark {
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+}
+
+.profile-mark.has-avatar {
+    color: transparent;
+    border-color: var(--accent-strong);
+    box-shadow: 0 0 18px var(--accent-glow), inset 0 0 0 1px rgba(255,255,255,.10);
+}
+
+.personalization-view {
+    max-width: 1120px;
+}
+
+.personalization-header {
+    margin-bottom: 26px;
+}
+
+.personalization-header h1 {
+    max-width: 760px;
+}
+
+.personalization-header p {
+    max-width: 760px;
+}
+
+.personalization-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.personalization-card {
+    position: relative;
+    min-width: 0;
+    padding: 24px;
+    border: 1px solid rgba(155,108,255,.13);
+    border-radius: 18px;
+    background:
+        radial-gradient(circle at 100% 0%, rgba(155,108,255,.055), transparent 36%),
+        linear-gradient(145deg, rgba(28,23,39,.92), rgba(15,12,21,.96));
+    box-shadow: var(--shadow-sm);
+}
+
+.personalization-card:hover {
+    border-color: rgba(155,108,255,.22);
+}
+
+.personalization-card-copy p,
+.personalization-accent-card > p {
+    margin: 8px 0 0;
+    font-size: 12px;
+    max-width: 520px;
+}
+
+.personalization-card h2 {
+    font-size: 22px;
+}
+
+.personalization-name-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.personalization-avatar-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    gap: 18px 22px;
+    align-items: center;
+}
+
+.personalization-avatar-card .personalization-card-copy {
+    min-width: 0;
+}
+
+.avatar-preview {
+    width: 104px;
+    height: 104px;
+    flex: 0 0 auto;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    border: 1px solid rgba(155,108,255,.38);
+    background:
+        radial-gradient(circle at 35% 25%, rgba(255,255,255,.16), transparent 28%),
+        linear-gradient(145deg, rgba(155,108,255,.20), rgba(20,15,28,.98));
+    color: var(--accent-strong);
+    font-size: 34px;
+    font-weight: 800;
+    box-shadow: 0 12px 32px rgba(0,0,0,.26), 0 0 26px rgba(155,108,255,.07);
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+}
+
+.avatar-preview.has-avatar {
+    color: transparent;
+    box-shadow: 0 14px 34px rgba(0,0,0,.30), 0 0 28px var(--accent-glow);
+}
+
+.avatar-preview img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    border-radius: inherit;
+    object-fit: cover;
+    object-position: center;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+.personalization-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.personalization-avatar-card .personalization-actions {
+    grid-column: 1 / -1;
+}
+
+.personalization-background-card {
+    grid-column: 1 / -1;
+}
+
+.background-preview {
+    position: relative;
+    min-height: 170px;
+    margin-top: 18px;
+    border: 1px solid rgba(155,108,255,.16);
+    border-radius: 14px;
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+    background:
+        radial-gradient(circle at 30% 20%, rgba(155,108,255,.18), transparent 32%),
+        linear-gradient(135deg, #191322, #0e0b14 58%, #211934);
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.025);
+}
+
+.background-preview-image {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+    object-position: center;
+    user-select: none;
+    -webkit-user-drag: none;
+    z-index: 0;
+}
+
+.background-preview::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(8,6,13,.10), rgba(8,6,13,.60));
+    pointer-events: none;
+    z-index: 1;
+}
+
+.background-preview span {
+    position: relative;
+    z-index: 2;
+    color: rgba(255,255,255,.62);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .14em;
+}
+
+.personalization-background-card .personalization-actions {
+    margin-top: 14px;
+}
+
+.personalization-accent-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.accent-choice-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 20px;
+}
+
+.accent-swatch {
+    width: 34px;
+    height: 34px;
+    padding: 4px;
+    border: 1px solid transparent;
+    border-radius: 50%;
+    background: rgba(255,255,255,.025);
+    cursor: pointer;
+    transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+
+.accent-swatch span {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    box-shadow: inset 0 1px 1px rgba(255,255,255,.22);
+}
+
+.accent-swatch:hover {
+    transform: translateY(-1px);
+    border-color: rgba(255,255,255,.18);
+}
+
+.accent-swatch.selected {
+    border-color: rgba(255,255,255,.72);
+    box-shadow: 0 0 0 3px var(--accent-soft), 0 0 22px var(--accent-glow);
+}
+
+.accent-preview {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 18px;
+    min-height: 44px;
+    padding: 9px 12px;
+    border: 1px solid var(--accent-strong-soft);
+    border-radius: 11px;
+    background: var(--accent-soft);
+    color: var(--muted-strong);
+    font-size: 12px;
+}
+
+.accent-preview-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--accent-strong);
+    box-shadow: 0 0 14px var(--accent-glow);
+}
+
+.btn-quiet {
+    color: var(--muted-strong) !important;
+    border-color: transparent !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+.btn-quiet:hover {
+    color: var(--text) !important;
+    background: rgba(255,255,255,.045) !important;
+    border-color: rgba(255,255,255,.08) !important;
+}
+
+.visually-hidden-file {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.personalization-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    margin-top: 18px;
+    padding: 16px 2px 0;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.personalization-footer > span {
+    max-width: 650px;
+    line-height: 1.5;
+}
+
+.personalization-footer .btn {
+    flex: 0 0 auto;
+}
+
+.personalization-view .setup-message {
+    margin-top: 8px;
+}
+
+@media (max-width: 820px) {
+    .personalization-grid {
+        grid-template-columns: 1fr;
+    }
+    .personalization-background-card {
+        grid-column: auto;
+    }
+}
+
+@media (max-width: 620px) {
+    .personalization-card {
+        padding: 20px;
+    }
+    .personalization-avatar-card {
+        grid-template-columns: 1fr;
+    }
+    .avatar-preview {
+        width: 88px;
+        height: 88px;
+    }
+    .personalization-footer {
+        align-items: stretch;
+        flex-direction: column;
+    }
+    .personalization-footer .btn {
+        width: 100%;
+    }
+}
+
+/* ========================================================================== */
+/* M24 Phase 2B — Background / Home Composition Refinement                   */
+/*                                                                              */
+/* Let the user's artwork become the application canvas instead of a panel     */
+/* behind an opaque shell. Existing layout/data structure is preserved.        */
+/* ========================================================================== */
+
+body.has-waymark-background {
+    background-color: var(--bg-deep);
+}
+
+body.has-waymark-background::after {
+    z-index: 0;
+    opacity: 1;
+    background-image:
+        linear-gradient(180deg, rgba(6, 5, 10, 0.18) 0%, rgba(6, 5, 10, 0.34) 48%, rgba(6, 5, 10, 0.58) 100%),
+        var(--waymark-background-image);
+    background-size: cover;
+    background-position: center center;
+    filter: saturate(.88) brightness(.84);
+    transform: scale(1.012);
+}
+
+body.has-waymark-background .app-shell {
+    background: transparent;
+}
+
+body.has-waymark-background .sidebar {
+    background:
+        linear-gradient(180deg, rgba(11, 8, 18, 0.78), rgba(9, 7, 14, 0.64));
+    border-right-color: rgba(255, 255, 255, 0.09);
+    box-shadow: 18px 0 55px rgba(0, 0, 0, 0.18);
+    backdrop-filter: blur(20px) saturate(1.08);
+    -webkit-backdrop-filter: blur(20px) saturate(1.08);
+}
+
+body.has-waymark-background .brand-mark.logo-mark {
+    background: rgba(8, 6, 13, 0.66);
+}
+
+body.has-waymark-background .nav-item:hover {
+    background: rgba(255, 255, 255, 0.055);
+    border-color: rgba(255, 255, 255, 0.075);
+}
+
+body.has-waymark-background .nav-item.active {
+    background: linear-gradient(90deg, var(--accent-soft), rgba(255, 255, 255, 0.045));
+    border-color: var(--accent-strong-soft);
+}
+
+body.has-waymark-background .ready-status {
+    border-top-color: rgba(255, 255, 255, 0.10);
+}
+
+body.has-waymark-background .topbar {
+    background: rgba(9, 7, 14, 0.42);
+    border-bottom-color: rgba(255, 255, 255, 0.085);
+    backdrop-filter: blur(20px) saturate(1.08);
+    -webkit-backdrop-filter: blur(20px) saturate(1.08);
+}
+
+body.has-waymark-background .view {
+    background: transparent;
+}
+
+body.has-waymark-background .view-inner {
+    position: relative;
+}
+
+/* Home: let the artwork breathe around the content rather than stacking
+   opaque rectangles over it. */
+body.has-waymark-background .home-dashboard {
+    max-width: 1180px;
+}
+
+body.has-waymark-background .home-hero {
+    min-height: 185px;
+    align-items: flex-end;
+    padding: 22px 0 10px;
+}
+
+body.has-waymark-background .home-hero::before {
+    height: 104px;
+    background: linear-gradient(var(--accent-strong-soft), transparent);
+}
+
+body.has-waymark-background .home-hero > div:first-child {
+    max-width: 820px;
+}
+
+body.has-waymark-background .home-hero h1 {
+    text-shadow: 0 8px 34px rgba(0, 0, 0, 0.42);
+}
+
+body.has-waymark-background .home-hero > div:first-child > p {
+    max-width: 720px;
+    text-shadow: 0 3px 18px rgba(0, 0, 0, 0.48);
+}
+
+/* Turn the three large metric blocks into a lighter information rail. */
+body.has-waymark-background .home-stat-grid {
+    gap: 10px;
+    margin-top: 8px;
+}
+
+body.has-waymark-background .home-stat-card {
+    min-height: 88px;
+    padding: 16px 18px;
+    background: linear-gradient(145deg, rgba(18, 15, 25, 0.64), rgba(12, 10, 17, 0.52));
+    border-color: rgba(255, 255, 255, 0.10);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.16);
+    backdrop-filter: blur(16px) saturate(1.05);
+    -webkit-backdrop-filter: blur(16px) saturate(1.05);
+}
+
+body.has-waymark-background .home-stat-card::after {
+    border-color: rgba(255, 255, 255, 0.045);
+}
+
+/* Main home panels become frosted surfaces. Their borders stay visible, but
+   the selected background remains readable through them. */
+body.has-waymark-background .home-panel,
+body.has-waymark-background .home-footer-row {
+    background: linear-gradient(145deg, rgba(19, 16, 27, 0.72), rgba(10, 9, 15, 0.62));
+    border-color: rgba(255, 255, 255, 0.105);
+    box-shadow: 0 22px 55px rgba(0, 0, 0, 0.18);
+    backdrop-filter: blur(16px) saturate(1.04);
+    -webkit-backdrop-filter: blur(16px) saturate(1.04);
+}
+
+body.has-waymark-background .home-continue-row,
+body.has-waymark-background .home-action-row {
+    background: rgba(7, 8, 12, 0.42);
+    border-color: rgba(255, 255, 255, 0.075);
+}
+
+body.has-waymark-background .home-continue-row:hover,
+body.has-waymark-background .home-action-row:hover {
+    background: rgba(255, 255, 255, 0.065);
+    border-color: rgba(255, 255, 255, 0.13);
+}
+
+body.has-waymark-background .home-progress-track {
+    background: rgba(255, 255, 255, 0.11);
+}
+
+body.has-waymark-background .home-progress-track i {
+    background: var(--accent-strong);
+    box-shadow: 0 0 12px var(--accent-glow);
+}
+
+/* Keep non-home pages visually consistent with the same glass canvas. */
+body.has-waymark-background .panel,
+body.has-waymark-background .service-panel,
+body.has-waymark-background .question-panel,
+body.has-waymark-background .watch-entry-panel,
+body.has-waymark-background .watch-selection-panel,
+body.has-waymark-background .watch-confirm-panel,
+body.has-waymark-background .watch-rewatch-panel,
+body.has-waymark-background .watch-saved-panel,
+body.has-waymark-background .review-entry-panel,
+body.has-waymark-background .review-selection-panel,
+body.has-waymark-background .review-editor-panel,
+body.has-waymark-background .review-confirm-panel,
+body.has-waymark-background .review-existing-panel,
+body.has-waymark-background .review-target-panel,
+body.has-waymark-background .review-result-select,
+body.has-waymark-background .library-panel,
+body.has-waymark-background .history-panel,
+body.has-waymark-background .details-card {
+    background: linear-gradient(145deg, rgba(19, 16, 27, 0.76), rgba(10, 9, 15, 0.64));
+    border-color: rgba(255, 255, 255, 0.095);
+    backdrop-filter: blur(14px) saturate(1.03);
+    -webkit-backdrop-filter: blur(14px) saturate(1.03);
+}
+
+body.has-waymark-background .list-row,
+body.has-waymark-background .result-row,
+body.has-waymark-background .library-row,
+body.has-waymark-background .history-row {
+    background: rgba(8, 8, 12, 0.42);
+    border-color: rgba(255, 255, 255, 0.07);
+}
+
+body.has-waymark-background .list-row:hover,
+body.has-waymark-background .result-row:hover,
+body.has-waymark-background .library-row:hover,
+body.has-waymark-background .history-row:hover {
+    background: rgba(255, 255, 255, 0.055);
+}
+
+@media (max-width: 900px) {
+    body.has-waymark-background .home-hero {
+        min-height: 160px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    body.has-waymark-background::after {
+        transform: none;
+    }
+}
+
+
+/* ========================================================================== */
+/* M24 Phase 2C — Compact navigation / cinematic canvas                       */
+/*                                                                              */
+/* The application chrome becomes a narrow icon rail, closer to a media hub   */
+/* or Discord-style utility rail. Labels are revealed on hover instead of     */
+/* permanently consuming the artwork canvas.                                  */
+/* ========================================================================== */
+
+@media (min-width: 681px) {
+    .sidebar {
+        width: 72px;
+        flex-basis: 72px;
+        padding: 16px 10px 14px;
+        background: rgba(9, 7, 14, 0.52) !important;
+        border-right-color: rgba(255, 255, 255, 0.075);
+        box-shadow: 10px 0 38px rgba(0, 0, 0, 0.14);
+        backdrop-filter: blur(22px) saturate(1.08);
+        -webkit-backdrop-filter: blur(22px) saturate(1.08);
+        z-index: 4;
+    }
+
+    .brand {
+        justify-content: center;
+        padding: 0 0 18px;
+    }
+
+    .brand-mark.logo-mark {
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        padding: 6px;
+        background: rgba(7, 5, 12, 0.58);
+        border-color: rgba(255, 255, 255, 0.11);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    .brand-name,
+    .nav-item > span:last-child,
+    .ready-status > span:last-child {
+        display: none;
+    }
+
+    .primary-nav {
+        gap: 7px;
+    }
+
+    .nav-item {
+        width: 52px;
+        min-height: 52px;
+        height: 52px;
+        margin: 0 auto;
+        padding: 0;
+        justify-content: center;
+        gap: 0;
+        border-radius: 15px;
+        border-color: transparent;
+        color: rgba(239, 238, 246, 0.62);
+        position: relative;
+    }
+
+    .nav-item:hover {
+        background: rgba(255, 255, 255, 0.075);
+        border-color: rgba(255, 255, 255, 0.08);
+        color: var(--text);
+        transform: translateY(-1px);
+    }
+
+    .nav-item.active {
+        background: var(--accent-soft);
+        border-color: rgba(255, 255, 255, 0.09);
+        color: var(--accent-strong);
+        box-shadow: inset 0 0 22px rgba(255, 255, 255, 0.025), 0 8px 22px rgba(0, 0, 0, 0.12);
+    }
+
+    .nav-item.active::before {
+        left: -10px;
+        top: 15px;
+        bottom: 15px;
+        width: 2px;
+        box-shadow: 0 0 12px var(--accent-glow);
+    }
+
+    .nav-icon {
+        width: 22px;
+        height: 22px;
+        display: grid;
+        place-items: center;
+        font-size: 0;
+    }
+
+    .nav-icon svg {
+        width: 19px;
+        height: 19px;
+        display: block;
+    }
+
+    .nav-item.active .nav-icon svg {
+        filter: drop-shadow(0 0 6px var(--accent-glow));
+    }
+
+    .nav-item[data-tooltip]::after {
+        content: attr(data-tooltip);
+        position: absolute;
+        left: calc(100% + 11px);
+        top: 50%;
+        transform: translate(-4px, -50%);
+        opacity: 0;
+        pointer-events: none;
+        white-space: nowrap;
+        padding: 8px 10px;
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        border-radius: 9px;
+        background: rgba(13, 10, 19, 0.92);
+        color: var(--text);
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: .01em;
+        transition: opacity .14s ease, transform .14s ease;
+        z-index: 30;
+    }
+
+    .nav-item[data-tooltip]:hover::after,
+    .nav-item[data-tooltip]:focus-visible::after {
+        opacity: 1;
+        transform: translate(0, -50%);
+    }
+
+    .sidebar-bottom {
+        display: grid;
+        gap: 10px;
+        justify-items: center;
+    }
+
+    .sidebar-bottom > .nav-item {
+        margin-bottom: 0;
+    }
+
+    .ready-status {
+        width: 52px;
+        height: 18px;
+        padding: 0;
+        border-top: 0;
+        display: grid;
+        place-items: center;
+        color: transparent;
+        font-size: 0;
+    }
+
+    .status-dot {
+        width: 6px;
+        height: 6px;
+        margin: 0;
+        box-shadow: 0 0 10px rgba(112, 213, 155, 0.55);
+    }
+
+    .topbar {
+        height: 54px;
+        flex-basis: 54px;
+        padding: 0 20px 0 24px;
+        border-bottom-color: rgba(255, 255, 255, 0.055);
+        background: rgba(9, 7, 14, 0.30) !important;
+        backdrop-filter: blur(20px) saturate(1.05);
+        -webkit-backdrop-filter: blur(20px) saturate(1.05);
+        z-index: 3;
+    }
+
+    #page-label {
+        display: none;
+    }
+
+    .profile {
+        margin-left: auto;
+        padding: 4px 7px 4px 4px;
+        gap: 8px;
+        border-color: rgba(255, 255, 255, 0.08);
+        background: rgba(10, 8, 16, 0.30);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+    }
+
+    .profile-mark {
+        width: 30px;
+        height: 30px;
+        border-radius: 9px;
+    }
+
+    .view {
+        padding-top: 30px;
+    }
+
+    body.has-waymark-background .sidebar {
+        background: rgba(9, 7, 14, 0.46) !important;
+    }
+
+    body.has-waymark-background .topbar {
+        background: rgba(9, 7, 14, 0.28) !important;
+    }
+}
+
+/* Keep the compact rail on smaller windows too, while preserving the existing
+   single-column responsive content rules. */
+@media (max-width: 680px) {
+    .sidebar {
+        width: 64px;
+        flex-basis: 64px;
+        padding-left: 6px;
+        padding-right: 6px;
+    }
+
+    .brand {
+        padding-bottom: 14px;
+    }
+
+    .brand-mark.logo-mark {
+        width: 36px;
+        height: 36px;
+        padding: 5px;
+    }
+
+    .nav-item {
+        width: 48px;
+        min-height: 48px;
+        height: 48px;
+        padding: 0;
+        justify-content: center;
+        border-radius: 14px;
+    }
+
+    .nav-item > span:last-child,
+    .brand-name,
+    .ready-status > span:last-child {
+        display: none;
+    }
+
+    .nav-icon {
+        width: 21px;
+        height: 21px;
+    }
+
+    .nav-icon svg {
+        width: 18px;
+        height: 18px;
+    }
+
+    .topbar {
+        height: 50px;
+        flex-basis: 50px;
+        padding: 0 12px;
+    }
+
+    .view {
+        padding: 26px 20px 50px;
+    }
+
+    .profile > span:not(.profile-chevron) {
+        display: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .nav-item[data-tooltip]::after,
+    .nav-item {
+        transition: none !important;
+    }
+}
+
+/* M24 Phase 2D — Immersive canvas refinement
+   Keep navigation floating over the artwork instead of reserving a full-width bar. */
+@media (min-width: 681px) {
+    .main-area {
+        position: relative;
+        isolation: isolate;
+    }
+
+    .topbar {
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 0;
+        flex-basis: 0;
+        min-height: 0;
+        padding: 0;
+        border: 0 !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        z-index: 12;
+        pointer-events: none;
+    }
+
+    #page-label {
+        display: none !important;
+    }
+
+    .profile {
+        position: absolute;
+        top: 16px;
+        right: 18px;
+        margin: 0;
+        min-height: 40px;
+        padding: 4px 8px 4px 5px;
+        gap: 8px;
+        color: rgba(248, 247, 252, 0.92);
+        border: 1px solid rgba(255, 255, 255, 0.13);
+        border-radius: 999px;
+        background: rgba(11, 9, 17, 0.26);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+        backdrop-filter: blur(18px) saturate(1.12);
+        -webkit-backdrop-filter: blur(18px) saturate(1.12);
+        pointer-events: auto;
+        transition: background .16s ease, border-color .16s ease, transform .16s ease;
+    }
+
+    .profile:hover {
+        background: rgba(13, 10, 20, 0.40);
+        border-color: rgba(255, 255, 255, 0.19);
+        transform: translateY(-1px);
+    }
+
+    .profile-mark {
+        width: 31px;
+        height: 31px;
+        border-radius: 50%;
+        border-color: rgba(255, 255, 255, 0.18);
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.20);
+    }
+
+    .profile > span:not(.profile-chevron) {
+        font-size: 12px;
+        font-weight: 750;
+        letter-spacing: .01em;
+    }
+
+    .profile-chevron {
+        font-size: 12px;
+        opacity: .65;
+    }
+
+    .view {
+        padding-top: 24px;
+    }
+
+    /* Give the first screen a little more breathing room around the floating profile. */
+    .home-view,
+    .view-inner {
+        position: relative;
+    }
+
+    .home-view .hero-copy {
+        padding-right: 72px;
+    }
+
+    /* The artwork should remain the dominant visual layer; content cards stay legible without
+       becoming opaque rectangles over the user's image. */
+    body.has-waymark-background .home-stat,
+    body.has-waymark-background .home-continue,
+    body.has-waymark-background .home-actions,
+    body.has-waymark-background .home-recent,
+    body.has-waymark-background .home-stats {
+        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.035);
+    }
+}
+
+@media (max-width: 680px) {
+    .main-area {
+        position: relative;
+    }
+
+    .topbar {
+        position: absolute;
+        inset: 0 0 auto 0;
+        height: 0;
+        flex-basis: 0;
+        padding: 0;
+        border: 0 !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        pointer-events: none;
+        z-index: 12;
+    }
+
+    #page-label {
+        display: none !important;
+    }
+
+    .profile {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        margin: 0;
+        pointer-events: auto;
+        padding: 3px 6px 3px 3px;
+        border-radius: 999px;
+        background: rgba(11, 9, 17, 0.30);
+        border-color: rgba(255, 255, 255, 0.12);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+    }
+
+    .view {
+        padding-top: 18px;
+    }
+}
+
+
+/* ================================================================
+   M26 — ARTWORK-FIRST HOME + LIBRARY
+   Keep the existing visual system; make media artwork the primary
+   visual layer and reduce dashboard density.
+   ================================================================ */
+.home-dashboard { max-width: 1280px; }
+.home-hero-compact { padding-top: 8px; margin-bottom: 18px; }
+.home-hero-compact h1 { letter-spacing: -0.045em; }
+.home-hero-compact p { max-width: 760px; }
+
+.home-featured {
+    position: relative;
+    min-height: 300px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,.13);
+    border-radius: 24px;
+    background: rgba(10,8,15,.66);
+    box-shadow: 0 24px 70px rgba(0,0,0,.26);
+    cursor: pointer;
+    isolation: isolate;
+}
+.home-featured-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    background-color: rgba(15,12,22,.9);
+    background-position: center right;
+    background-size: cover;
+    filter: saturate(.92);
+    transform: scale(1.015);
+}
+.home-featured::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: linear-gradient(90deg, rgba(7,5,12,.32), transparent 60%), linear-gradient(0deg, rgba(7,5,12,.72), transparent 46%);
+    pointer-events: none;
+}
+.home-featured:hover { border-color: rgba(255,255,255,.22); transform: translateY(-1px); }
+.home-featured-copy {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    min-height: 300px;
+    max-width: 610px;
+    padding: 38px 42px;
+}
+.home-featured-copy h2 { margin: 8px 0 0; font-size: clamp(30px, 4vw, 50px); letter-spacing: -.045em; }
+.home-featured-copy p { margin: 10px 0 0; color: rgba(255,255,255,.72); font-size: 13px; }
+.home-featured-actions { display: flex; gap: 8px; margin-top: 22px; }
+.home-featured-progress { width: min(360px, 100%); height: 4px; margin-top: 18px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.13); }
+.home-featured-progress span { display: block; height: 100%; border-radius: inherit; background: var(--accent); box-shadow: 0 0 16px var(--accent-glow); }
+.home-featured-poster {
+    position: absolute;
+    right: 7%;
+    bottom: -9%;
+    width: 210px;
+    max-height: 92%;
+    object-fit: cover;
+    object-position: center;
+    border-radius: 16px 16px 0 0;
+    opacity: .78;
+    transform: rotate(4deg);
+    box-shadow: 0 28px 70px rgba(0,0,0,.5);
+    z-index: 1;
+}
+.home-featured-empty { cursor: default; }
+.home-featured-empty:hover { transform: none; }
+.home-featured-nav {
+    position: absolute;
+    top: 50%;
+    z-index: 4;
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    margin: 0;
+    padding: 0;
+    transform: translateY(-50%);
+    border: 1px solid rgba(255,255,255,.18);
+    border-radius: 50%;
+    background: rgba(7,6,10,.48);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    color: rgba(255,255,255,.92);
+    font: inherit;
+    font-size: 28px;
+    font-weight: 300;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: 0 10px 26px rgba(0,0,0,.24);
+    transition: background .16s ease, border-color .16s ease, transform .16s ease, color .16s ease;
+}
+
+.home-featured-prev { left: 18px; }
+.home-featured-next { right: 18px; }
+
+.home-featured-nav:hover {
+    background: rgba(12,10,18,.72);
+    border-color: rgba(255,255,255,.34);
+    color: #fff;
+}
+
+.home-featured-prev:hover {
+    transform: translate(-1px, -50%);
+}
+
+.home-featured-next:hover {
+    transform: translate(1px, -50%);
+}
+
+.home-featured-nav:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.home-featured-dots {
+    position: absolute;
+    left: 50%;
+    bottom: 16px;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transform: translateX(-50%);
+}
+
+.home-featured-dot {
+    width: 7px;
+    height: 7px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255,255,255,.42);
+    cursor: pointer;
+    transition: width .16s ease, background .16s ease, transform .16s ease;
+}
+
+.home-featured-dot:hover {
+    background: rgba(255,255,255,.78);
+    transform: scale(1.15);
+}
+
+.home-featured-dot.is-active {
+    width: 20px;
+    border-radius: 999px;
+    background: var(--accent);
+    box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.home-featured-dot:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+}
+
+.home-stat-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0,1fr));
+    margin: 14px 0 28px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,.10);
+    border-radius: 16px;
+    background: rgba(10,8,15,.42);
+    backdrop-filter: blur(16px);
+}
+.home-stat-strip > div { min-width: 0; padding: 15px 18px; border-right: 1px solid rgba(255,255,255,.07); }
+.home-stat-strip > div:last-child { border-right: 0; }
+.home-stat-strip span { display: block; color: var(--muted-strong); font-size: 9px; font-weight: 800; letter-spacing: .12em; }
+.home-stat-strip strong { display: block; margin-top: 3px; font-size: 22px; letter-spacing: -.03em; }
+.home-stat-strip small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.home-media-section { margin-top: 4px; }
+.home-section-head { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 12px; }
+.home-section-head h2 { margin: 6px 0 0; font-size: 23px; letter-spacing: -.035em; }
+.home-media-grid { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 12px; }
+.media-card {
+    min-width: 0;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,.10);
+    border-radius: 16px;
+    background: rgba(9,8,13,.64);
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.media-card:hover { transform: translateY(-4px); border-color: rgba(255,255,255,.22); box-shadow: 0 18px 36px rgba(0,0,0,.28); }
+.media-card-art { position: relative; aspect-ratio: 2 / 3; overflow: hidden; background: linear-gradient(145deg, rgba(155,108,255,.18), rgba(8,7,12,.92)); }
+.media-card-art img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.media-card-art-fallback { position: absolute; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 30% 20%, var(--accent-soft), transparent 45%), linear-gradient(145deg, #17121f, #09080d); }
+.media-card-art-fallback span { font-size: 48px; font-weight: 800; color: rgba(255,255,255,.82); }
+.media-card-art:not(.is-missing) .media-card-art-fallback { opacity: 0; }
+.media-card-badge { position: absolute; left: 9px; bottom: 9px; padding: 5px 7px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(7,6,10,.72); backdrop-filter: blur(10px); color: rgba(255,255,255,.84); font-size: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: .07em; }
+.media-card-play { position: absolute; right: 9px; bottom: 9px; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: var(--accent-text); box-shadow: 0 6px 20px var(--accent-glow); font-size: 10px; }
+.media-card-copy { padding: 11px 11px 12px; }
+.media-card-copy strong { display: block; overflow: hidden; font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+.media-card-copy > span { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.media-card-progress, .library-media-progress { height: 3px; margin-top: 8px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.10); }
+.media-card-progress i, .library-media-progress i { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+
+.home-lower-grid { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(300px,.65fr); gap: 14px; margin-top: 28px; }
+.home-action-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; margin-top: 15px; }
+.home-action-tile { min-height: 105px; padding: 14px; display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; border: 1px solid rgba(255,255,255,.09); border-radius: 14px; background: rgba(8,7,12,.45); color: var(--text); text-align: left; cursor: pointer; }
+.home-action-tile:hover { border-color: rgba(255,255,255,.18); background: rgba(20,15,28,.58); }
+.home-action-tile > span { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--accent-soft); border-radius: 9px; background: var(--accent-soft); color: var(--accent-strong); }
+.home-action-tile strong { margin-top: 9px; font-size: 12px; }
+.home-action-tile small { color: var(--muted); font-size: 9px; }
+
+/* M26 library: poster wall instead of service tables. */
+.library-view { max-width: 1320px; }
+.library-hero-header { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 24px; }
+.library-hero-header h1 { margin: 7px 0 0; font-size: clamp(32px,4vw,48px); letter-spacing: -.05em; }
+.library-hero-header p { margin: 8px 0 0; color: var(--muted); }
+.library-header-actions { display: flex; align-items: center; gap: 8px; }
+.library-total-badge { padding: 8px 10px; border: 1px solid rgba(255,255,255,.11); border-radius: 999px; background: rgba(9,8,13,.44); color: var(--muted-strong); font-size: 10px; font-weight: 700; }
+.library-service-section { margin-top: 26px; }
+.library-section-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.library-section-head h2 { margin: 5px 0 0; font-size: 22px; letter-spacing: -.03em; }
+.library-media-grid { display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: 12px; }
+.library-media-card { min-width: 0; overflow: hidden; border: 1px solid rgba(255,255,255,.09); border-radius: 15px; background: rgba(9,8,13,.54); transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
+.library-media-card:hover { transform: translateY(-3px); border-color: rgba(255,255,255,.19); box-shadow: 0 16px 34px rgba(0,0,0,.25); }
+.library-media-art { position: relative; aspect-ratio: 2/3; overflow: hidden; background: linear-gradient(145deg, rgba(155,108,255,.16), rgba(8,7,12,.94)); }
+.library-media-art img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.library-media-fallback { position: absolute; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 30% 20%, var(--accent-soft), transparent 45%), linear-gradient(145deg,#17121f,#09080d); }
+.library-media-fallback span { font-size: 42px; font-weight: 800; color: rgba(255,255,255,.82); }
+.library-media-art:not(.is-missing) .library-media-fallback { opacity: 0; }
+.library-media-badge { position: absolute; left: 8px; bottom: 8px; padding: 4px 6px; border-radius: 999px; background: rgba(7,6,10,.72); border: 1px solid rgba(255,255,255,.14); color: rgba(255,255,255,.82); font-size: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+.library-media-copy { padding: 10px 10px 11px; }
+.library-media-copy strong { display: block; overflow: hidden; font-size: 11px; white-space: nowrap; text-overflow: ellipsis; }
+.library-media-copy > span { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+@media (max-width: 1100px) {
+    .home-media-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
+    .library-media-grid { grid-template-columns: repeat(5,minmax(0,1fr)); }
+    .home-featured-poster { right: 3%; opacity: .6; }
+}
+@media (max-width: 820px) {
+    .home-stat-strip { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .home-stat-strip > div:nth-child(2) { border-right: 0; }
+    .home-media-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
+    .home-lower-grid { grid-template-columns: 1fr; }
+    .library-media-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
+    .library-hero-header { align-items: flex-start; flex-direction: column; }
+    .home-featured-copy { padding: 30px; }
+    .home-featured-poster { display: none; }
+}
+@media (max-width: 560px) {
+    .home-stat-strip { grid-template-columns: 1fr 1fr; }
+    .home-media-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .library-media-grid { grid-template-columns: repeat(3,minmax(0,1fr)); }
+    .home-hero-actions { width: 100%; }
+    .home-hero-actions .btn { flex: 1; }
+}
