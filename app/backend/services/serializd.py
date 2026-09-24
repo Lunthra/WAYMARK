@@ -767,7 +767,7 @@ def set_show_status(show_id: int, status: str, *, delay_after: bool = True) -> d
     if status == "watching":
         result = _request(
             "POST",
-            f"{BASE_URL}/api/currently_watching",
+            f"{BASE_URL}/currently_watching",
             json={"show_id": show_id},
         )
         _invalidate_show(show_id)
